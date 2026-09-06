@@ -3,9 +3,10 @@
 Builds a subtitle track that shows a generic **TRIGGER INCOMING** banner ahead of scenes you
 asked to be warned about, with the original dialogue left in place. The output is a new `.ass`
 or `.srt` for local playback. Timestamps come from the official DoesTheDogDie API using your
-own key, or from a JSON file you write.
+own key, or from a JSON file you write. The dialogue track can be one you already have,
+one pulled out of the video file, or one fetched from OpenSubtitles with your own account.
 
-![Three stages, left to right: you supply a dialogue SRT plus either an events JSON or your own DoesTheDogDie key and an item ID; the agent plans a dry run that writes nothing; the tool writes warned subtitles and a provenance sidecar.](assets/workflow.svg)
+![Three stages, left to right: you supply a dialogue SRT, either your own or one fetched from OpenSubtitles, plus either an events JSON or your own DoesTheDogDie key and an item ID; the agent plans a dry run that writes nothing; the tool writes warned subtitles and a provenance sidecar.](assets/workflow.svg)
 
 **It does not find scenes, and it never gives an all-clear.** Every timestamp comes from you or
 the API, and nothing confirms they describe your copy, so play the file and check. A missing

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 280" width="880" height="280" role="img" aria-labelledby="tw-title tw-desc">
   <title id="tw-title">trigger-warnings workflow: your files in, a planned dry run, warned subtitles out</title>
-  <desc id="tw-desc">Three stages, left to right. Stage one, you supply: a dialogue SRT file and an events JSON file, or your own DoesTheDogDie API key and an item ID. Stage two, the agent plans: a dry run validates the inputs, resolves your categories, reports the warning windows and writes nothing. Stage three, the tool writes: a warned ASS or SRT subtitle file and a JSON provenance sidecar, carrying warning cues with your dialogue kept, as new files that never overwrite anything. Timestamps come from you, never from the tool, and a warning ending is not an all-clear.</desc>
+  <desc id="tw-desc">Three stages, left to right. Stage one, you supply: a dialogue SRT file, either one you already have or one fetched from OpenSubtitles with --os-file, and an events JSON file, or your own DoesTheDogDie API key and an item ID. Stage two, the agent plans: a dry run validates the inputs, resolves your categories, reports the warning windows and writes nothing. Stage three, the tool writes: a warned ASS or SRT subtitle file and a JSON provenance sidecar, carrying warning cues with your dialogue kept, as new files that never overwrite anything. Timestamps come from you, never from the tool, and a warning ending is not an all-clear.</desc>
 
   <style>
     .bg   { fill: #ffffff; stroke: #d0d7de; }
@@ -41,6 +41,7 @@
   <text class="t-head head" x="76" y="56">You supply</text>
   <line class="rule" x1="44" y1="74" x2="252" y2="74"/>
   <text class="t-mono mono" x="44" y="100">dialogue.srt</text>
+  <text class="t-mute mute" x="140" y="100">or --os-file ID</text>
   <text class="t-mono mono" x="44" y="122">events.json</text>
   <line class="rule" x1="44" y1="140" x2="134" y2="140"/>
   <text class="t-mute mute" x="148" y="144" text-anchor="middle">or</text>
