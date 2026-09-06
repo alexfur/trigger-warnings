@@ -812,6 +812,7 @@ def _os_provenance_payload(args, source):
             "attribution": _os_attribution(),
             "downloadsUsedToday": source.used,
             "downloadsRemainingToday": source.remaining,
+            "quotaResetsAt": source.reset_at,
             "notes": list(source.notes),
         },
         "output": str(args.output),
@@ -870,7 +871,9 @@ def _download_os_subtitle(args, report, result):
             "fileId": args.os_file,
             "fileName": source.file_name,
             "attribution": opensubtitles.ATTRIBUTION,
+            "downloadsUsedToday": source.used,
             "downloadsRemainingToday": source.remaining,
+            "quotaResetsAt": source.reset_at,
         },
         "output": str(args.output),
         "provenance": str(args.provenance) if args.provenance is not None else None,
@@ -891,8 +894,29 @@ def _download_os_subtitle(args, report, result):
     return EXIT_OK
 
 
+def _was_supplied(args, flag, value, default):
+    """Whether the caller actually wrote this flag.
+
+    A flag spelled out at its own default is still a flag the caller asked for,
+    and a value comparison cannot see the difference. It also cannot see that
+    ``--lead 20.0`` and ``--lead 2e1`` are the default, or that ``--tail -0``
+    is; a presence test catches every spelling at once.
+
+    Falls back to comparing values for a hand-built Namespace, which carries no
+    record of an argv.
+    """
+    written = getattr(args, "supplied_options", None)
+    if written is not None:
+        return flag in written
+    return value != default
+
+
 def _reject_os_flags(args, mode, allowed):
-    """Refuse any flag belonging to another mode, naming every one supplied."""
+    """Refuse any flag belonging to another mode, naming every one supplied.
+
+    Every mode guard in the dispatch routes through here, so they cannot drift
+    apart into answering the same question two different ways.
+    """
     candidates = (
         ("--subtitles", args.subtitles, None),
         ("--events", args.events, None),
@@ -907,6 +931,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--ddd-api-key", args.ddd_api_key, None),
         ("--os-search", args.os_search, None),
         ("--os-file", args.os_file, None),
+        ("--os-api-key", args.os_api_key, None),
         ("--os-year", args.os_year, None),
         ("--os-season", args.os_season, None),
         ("--os-episode", args.os_episode, None),
@@ -919,16 +944,9 @@ def _reject_os_flags(args, mode, allowed):
         ("--list-streams", args.list_streams, False),
         ("--language", args.language, _DEFAULT_LANGUAGE),
     )
-    # Prefer the flags actually written over a value comparison: a flag set
-    # to its own default is still a flag the caller asked for, and answering
-    # "accepted" there tells them a lead or a language was applied when the
-    # mode ignores both. The value comparison remains for a hand-built
-    # Namespace, which carries no record of an argv.
-    written = getattr(args, "supplied_options", None)
     supplied = [
         flag for flag, value, default in candidates
-        if flag not in allowed
-        and (flag in written if written is not None else value != default)
+        if flag not in allowed and _was_supplied(args, flag, value, default)
     ]
     if supplied:
         raise TriggerWarningsError("{}; run it without {}".format(
@@ -937,40 +955,18 @@ def _reject_os_flags(args, mode, allowed):
 
 
 def _reject_search_generation_flags(args):
-    supplied = []
-    for flag, value, default in (
-        ("--subtitles", args.subtitles, None),
-        ("--events", args.events, None),
-        ("--ddd-item", args.ddd_item, None),
-        ("--output", args.output, None),
-        ("--video", args.video, None),
-        ("--stream", args.stream, None),
-        ("--verify", args.verify, None),
-        ("--provenance", args.provenance, None),
-        ("--category", args.category, []),
-        ("--lead", args.lead, 20.0),
-        ("--tail", args.tail, 0.0),
-        ("--offset", args.offset, 0.0),
-        ("--dry-run", args.dry_run, False),
-        # A search reads no subtitle stream, so a language here means the
-        # caller expected a generation run and would get a title list instead.
-        ("--language", args.language, _DEFAULT_LANGUAGE),
-        ("--os-search", args.os_search, None),
-        ("--os-file", args.os_file, None),
-        ("--os-api-key", args.os_api_key, None),
-        ("--os-year", args.os_year, None),
-        ("--os-season", args.os_season, None),
-        ("--os-episode", args.os_episode, None),
-        ("--os-language", args.os_language, _DEFAULT_OS_LANGUAGE),
-    ):
-        if value != default:
-            supplied.append(flag)
-    if supplied:
-        raise TriggerWarningsError(
-            "--ddd-search only searches for an item ID; run it without {}".format(
-                ", ".join(supplied)
-            )
-        )
+    """--ddd-search is a mode of its own, and refuses the generation flags.
+
+    Delegates rather than repeating the list. Two guards answering the same
+    question separately is how they came to disagree: this one compared values
+    and the OpenSubtitles one checked presence, so ``--ddd-search X --lead 20``
+    was accepted while ``--os-search X --lead 20`` was refused.
+    """
+    _reject_os_flags(
+        args,
+        "--ddd-search only searches for an item ID",
+        allowed=("--ddd-search", "--ddd-year", "--ddd-api-key"),
+    )
 
 
 def run(args, report, result=None):
@@ -1012,8 +1008,8 @@ def run(args, report, result=None):
         _reject_os_flags(
             args,
             "--os-search only lists subtitle files to choose from",
-            allowed=("--os-search", "--os-year", "--os-season", "--os-episode",
-                     "--os-language"),
+            allowed=("--os-search", "--os-api-key", "--os-year", "--os-season",
+                     "--os-episode", "--os-language"),
         )
         found = _search_os_subtitles(args, report)
         result.update({
@@ -1029,7 +1025,7 @@ def run(args, report, result=None):
         _reject_os_flags(
             args,
             "--os-file downloads one dialogue track and adds no warnings",
-            allowed=("--os-file", "--output", "--provenance"),
+            allowed=("--os-file", "--os-api-key", "--output", "--provenance"),
         )
         return _download_os_subtitle(args, report, result)
 
@@ -1038,7 +1034,7 @@ def run(args, report, result=None):
                         ("--os-episode", args.os_episode)):
         if value is not None:
             raise TriggerWarningsError("{} needs --os-search".format(flag))
-    if args.os_language != _DEFAULT_OS_LANGUAGE:
+    if _was_supplied(args, "--os-language", args.os_language, _DEFAULT_OS_LANGUAGE):
         raise TriggerWarningsError(
             "--os-language narrows --os-search; --language selects an embedded "
             "stream for a generation run"

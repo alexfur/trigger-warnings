@@ -45,7 +45,9 @@ attempt. Neither one chooses a subtitle for the user: the search lists file ids
 and stops.
 """
 
+import datetime
 import json
+import time
 import unicodedata
 from collections import namedtuple
 from urllib.error import HTTPError, URLError
@@ -79,6 +81,10 @@ _REDACTED = "<redacted>"
 # part of the credential. Below it lie the ordinary words of a URL --
 # "download", "sub.srt" -- which are not worth blanking.
 _OPAQUE_SEGMENT_LEN = 16
+# Below this length a secret is not substring-matched at all. See _scrub:
+# this is about not shredding our own prose over a coincidence, and is
+# emphatically NOT what makes the redaction sound.
+_MIN_SCRUBBABLE_LEN = 8
 # A server-supplied string is truncated to this many characters before it
 # reaches a terminal, a sidecar or the JSON result.
 _MAX_FIELD_CHARS = 120
@@ -86,6 +92,27 @@ _MAX_FIELD_CHARS = 120
 # or hostile endpoint cannot stream unbounded bytes into memory before
 # anything has had a chance to reject them.
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+# A quota reset is a daily event. This window only rules out the absurd,
+# because a strict one risks the field never being surfaced at all.
+_RESET_PLAUSIBILITY_DAYS = 400
+
+# What each request is for. These decide the advice a failure gives, and
+# whether it may be repeated, so they are named rather than spelled out at the
+# call sites.
+_WHAT_LOGIN = "sign-in"
+_WHAT_SEARCH = "subtitle search"
+_WHAT_DOWNLOAD_REQUEST = "download request"
+_WHAT_FILE_FETCH = "subtitle download"
+
+# Only the file fetch may be repeated, and only on a status the server chose to
+# send. See _open.
+_RETRYABLE_CODES = (429, 503)
+_LINK_RETRIES = 1
+_RETRY_WAIT_S = 2.0
+
+#: Module-level so a test can replace it. Resolved from globals at call time,
+#: unlike a default argument, which would bind at definition.
+_sleep = time.sleep
 _API_TIMEOUT_S = 15
 _LINK_TIMEOUT_S = 30
 
@@ -118,15 +145,24 @@ SearchResults = namedtuple("SearchResults", "candidates notes")
 #: ``cues`` is the parsed dialogue count, carried so that no caller has to parse
 #: the body again outside the scrubbing guard. There is deliberately no
 #: ``link`` field.
-Download = namedtuple("Download", "text file_name remaining used notes cues")
+Download = namedtuple(
+    "Download", "text file_name remaining used notes cues reset_at"
+)
 
 
 # ------------------------------------------------------------------ redaction
 
 
 def _secret_forms(secret):
-    """Every shape one secret plausibly takes in a message we did not write."""
-    if not secret:
+    """Every shape one secret plausibly takes in a message we did not write.
+
+    Nothing shorter than :data:`_MIN_SCRUBBABLE_LEN` is matched. Every value
+    this module actually guards clears that easily: an API key, a JWT, a
+    temporary link, and the opaque link segments, which are gated at 16
+    characters of their own. What falls below it is a weak password that
+    happens to be an ordinary word.
+    """
+    if not secret or len(secret) < _MIN_SCRUBBABLE_LEN:
         return []
     return [form for form in {secret, quote(secret, safe="")} if form]
 
@@ -164,10 +200,23 @@ def _scrub(text, secrets):
     rejected, and both of those can carry the download token. One filter on the
     way out is cheaper than trusting every library we call to stay quiet.
 
-    Known limit, stated rather than hidden: this matches case-sensitively. A
-    server that changes the case of a credential before echoing it would defeat
-    it. Case-insensitive matching was rejected because a short credential would
-    then blank ordinary words wherever they happened to coincide.
+    Two limits, stated rather than hidden.
+
+    It matches case-sensitively. A server that changed the case of a credential
+    before echoing it would defeat it, and case-insensitive matching was
+    rejected because it would blank ordinary words wherever they coincided.
+
+    More importantly, substring redaction of *predictable* text is an oracle,
+    and no length rule closes it. Given a scrubbed message and the template it
+    came from, the secret is recoverable uniquely: ``account`` is seven
+    characters and ``download`` is eight, and both are pinpointed exactly by
+    the hole they leave. :data:`_MIN_SCRUBBABLE_LEN` is therefore not a
+    security boundary. It exists so that a weak password that happens to be an
+    English word does not reduce our own diagnostics to rubble, and it is safe
+    only because of the rule above it: the sole text this runs over is text we
+    wrote ourselves. What actually closes the oracle is refusing to echo
+    attacker-controlled bytes, which :func:`download_subtitle` does at the
+    parse. Do not mistake the length rule for the defence.
     """
     result = str(text)
     forms = []
@@ -281,6 +330,72 @@ def _text_field(value, limit=_MAX_FIELD_CHARS):
     return cleaned
 
 
+def _parse_reset_time(value):
+    """One quota reset instant, validated and re-rendered by us, or ``None``.
+
+    This is the only server-supplied *text* that reaches a message, and it gets
+    there by being parsed rather than filtered. Its siblings ``message`` and
+    ``reset_time`` stay out: they are free prose, and the threat there is not
+    the one :func:`_text_field` addresses. Terminal forgery needs control
+    characters; semantic injection ("ignore previous instructions") is plain
+    ASCII that survives any character filter intact, and the ``--json`` result
+    is fed straight into an agent's context.
+
+    A timestamp has no such problem, because it is not filtered and re-emitted,
+    it is understood and rebuilt. The output alphabet is fixed by construction,
+    which is the same argument :func:`_resolve_base_url` makes about rebuilding
+    a URL from the parsed host rather than returning the string it checked.
+
+    Two decisions worth knowing about:
+
+    *   **The trailing ``Z`` is rewritten before parsing.** Python 3.9's
+        ``fromisoformat`` rejects it and 3.13 accepts it, and this API sends it.
+        Without the rewrite the field parses locally, fails on the 3.9 CI leg,
+        and is dropped there in silence rather than turning anything red.
+    *   **A naive timestamp is taken as UTC**, because the field is named
+        ``reset_time_utc`` and that is the server asserting the zone. Being a
+        few hours out about a quota reset costs a retry, not correctness.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    # A bare date is not an instant, and fromisoformat would accept one.
+    if not text or "T" not in text:
+        return None
+    if text[-1] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.datetime.fromisoformat(text)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=datetime.timezone.utc)
+        moment = moment.astimezone(datetime.timezone.utc).replace(microsecond=0)
+        drift = moment - datetime.datetime.now(datetime.timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+    if abs(drift.days) > _RESET_PLAUSIBILITY_DAYS:
+        return None
+    return moment.isoformat().replace("+00:00", "Z")
+
+
+def _reset_from_http_error(error):
+    """The reset instant carried by a 406 body. Parsed, never quoted.
+
+    One field comes out and the rest is discarded unread. The read is bounded
+    and this is called only for a 406, because :func:`_open` is shared by four
+    call sites and reading an error body is a behaviour change for all of them.
+    """
+    try:
+        payload = error.read(_MAX_RESPONSE_BYTES + 1)
+        if len(payload) > _MAX_RESPONSE_BYTES:
+            return None
+        data = json.loads(payload.decode("utf-8"))
+    except Exception:  # a failure here means "no timestamp", never a new error
+        return None
+    if not isinstance(data, dict):
+        return None
+    return _parse_reset_time(data.get("reset_time_utc"))
+
+
 def _int_field(value):
     """An integer, or ``None``. A wrong type here reaches a format spec."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -331,8 +446,28 @@ def _require_year(year):
 # --------------------------------------------------------------------- transport
 
 
-def _status_hint(code):
-    """Turn a status code into the thing the user can actually act on."""
+def _status_hint(code, what):
+    """Turn a status code into the thing the user can actually act on.
+
+    Keyed on the code alone this gave advice that costs money. The quota is
+    charged when ``/download`` issues the link, not when the file is fetched,
+    so every failure *after* that point was being described in pre-charge
+    words: 410 said "run the download again", which spends a second unit out
+    of an allowance that can be twenty a day, and 406 asserted the quota was
+    spent when a link had demonstrably just been issued. None of them said a
+    download had already been charged. Hence ``what``.
+    """
+    if what == _WHAT_FILE_FETCH:
+        spent = (
+            " A download was already charged for this run, when the link was "
+            "issued, so running the command again spends another one."
+        )
+        return {
+            406: "The file server refused the request." + spent,
+            410: "The download link had expired or been used." + spent,
+            429: "Too many requests to the file server." + spent,
+            503: "The file server is temporarily unavailable." + spent,
+        }.get(code, "The file could not be fetched." + spent)
     return {
         401: "The sign-in was rejected or the session expired. Check "
              "{} and {}.".format(USERNAME_VARIABLE, PASSWORD_VARIABLE),
@@ -341,12 +476,17 @@ def _status_hint(code):
         403: "Either the API key was refused, or the User-Agent was. This tool "
              "sends {!r}, which is the format OpenSubtitles requires; a refused "
              "key is the likelier of the two.".format(USER_AGENT),
-        406: "The daily download quota for this account is spent. It resets "
-             "once a day; no retry here would help.",
-        410: "The download link had already expired or been used. Run the "
-             "download again to get a fresh one.",
-        429: "Too many requests: OpenSubtitles documents a limit of about one "
-             "request a second. Wait, then try again.",
+        406: "Documented causes are a spent daily download quota, a file id "
+             "that is not valid, an expired sign-in, or a missing Accept "
+             "header. Whether a refused request still counts against the "
+             "quota is not documented, so treat this run as possibly charged.",
+        410: "The resource is gone.",
+        # The ~1/s figure that used to sit here is the SIGN-IN limit, not the
+        # general one. Stating it as general sends the user to fix a
+        # non-problem.
+        429: "Too many requests: OpenSubtitles documents about 5 requests a "
+             "second per IP, and about 1 a second for sign-in. Wait, then try "
+             "again.",
         503: "OpenSubtitles is temporarily unavailable. This one is worth "
              "retrying later.",
     }.get(code, "")
@@ -358,34 +498,56 @@ def _open(opener, request, timeout, secrets, what):
     The response body is never quoted back. A server that echoes a submitted
     field into its error text would otherwise put the password in the message.
     """
-    try:
-        with opener(request, timeout=timeout) as response:
-            # Bounded on purpose: one byte over the cap is enough to know the
-            # response is not usable, and reading to exhaustion would let a
-            # broken endpoint decide how much memory this process uses.
-            payload = response.read(_MAX_RESPONSE_BYTES + 1)
-    except HTTPError as error:
-        hint = _status_hint(error.code)
-        _fail(
-            "OpenSubtitles returned HTTP {} for the {}.{}".format(
-                error.code, what, " " + hint if hint else ""
-            ),
-            secrets,
-        )
-    except (URLError, OSError, ValueError) as error:
-        _fail(
-            "Could not reach OpenSubtitles for the {}: {}".format(what, error),
-            secrets,
-        )
-    except Exception as error:
-        # Deliberately reports the type and not the text. An exception nobody
-        # anticipated carries whatever the failing library put in it, and on
-        # this code path that can be the request, a header or the link.
-        _fail(
-            "The {} failed unexpectedly ({}). Re-run to see whether it "
-            "persists.".format(what, type(error).__name__),
-            secrets,
-        )
+    # Only the file fetch repeats, and only on a status the server chose to
+    # send. Every other request either spends quota (the download POST), or is
+    # the endpoint the vendor limits hardest and asks callers not to hammer
+    # (the sign-in). The retry lives here rather than in _fetch_link because
+    # this function converts HTTPError into a scrubbed error, so by the time a
+    # caller sees it the status code is gone.
+    attempts = _LINK_RETRIES + 1 if what == _WHAT_FILE_FETCH else 1
+    for attempt in range(attempts):
+        try:
+            with opener(request, timeout=timeout) as response:
+                # Bounded on purpose: one byte over the cap is enough to know
+                # the response is not usable, and reading to exhaustion would
+                # let a broken endpoint decide how much memory this uses.
+                payload = response.read(_MAX_RESPONSE_BYTES + 1)
+            break
+        except HTTPError as error:
+            if error.code in _RETRYABLE_CODES and attempt + 1 < attempts:
+                _sleep(_RETRY_WAIT_S)
+                continue
+            hint = _status_hint(error.code, what)
+            if error.code == 406 and what == _WHAT_DOWNLOAD_REQUEST:
+                # The quota reset belongs to the API's own refusal. Parsing it
+                # out of a file server's error document would be incoherent.
+                moment = _reset_from_http_error(error)
+                if moment:
+                    hint += " The quota resets at {}.".format(moment)
+            _fail(
+                "OpenSubtitles returned HTTP {} for the {}.{}".format(
+                    error.code, what, " " + hint if hint else ""
+                ),
+                secrets,
+            )
+        except (URLError, OSError, ValueError) as error:
+            # Never retried, at any call site. A received status means the
+            # server answered; a lost response does not, and a request that
+            # timed out may have been processed.
+            _fail(
+                "Could not reach OpenSubtitles for the {}: {}".format(what, error),
+                secrets,
+            )
+        except Exception as error:
+            # Deliberately reports the type and not the text. An exception
+            # nobody anticipated carries whatever the failing library put in
+            # it, and on this path that can be the request, a header or the
+            # link.
+            _fail(
+                "The {} failed unexpectedly ({}). Re-run to see whether it "
+                "persists.".format(what, type(error).__name__),
+                secrets,
+            )
     # Outside the try, so this refusal is not swallowed by the arm above.
     if len(payload) > _MAX_RESPONSE_BYTES:
         _fail(
@@ -567,7 +729,7 @@ def search_subtitles(api_key, query, year=None, season=None, episode=None,
     secrets = (key,)
     data = _json_request(
         API_BASE_URL + "/subtitles?" + urlencode(parameters),
-        _headers(key), secrets, "subtitle search", opener,
+        _headers(key), secrets, _WHAT_SEARCH, opener,
     )
     return _parse_search(data, secrets)
 
@@ -623,7 +785,7 @@ def _login(credentials, opener, secrets):
     data = _json_request(
         API_BASE_URL + "/login",
         _headers(credentials.api_key, json_body=True),
-        secrets, "sign-in", opener,
+        secrets, _WHAT_LOGIN, opener,
         body={"username": credentials.username, "password": credentials.password},
     )
     if not isinstance(data, dict):
@@ -643,16 +805,21 @@ def _request_download(base_url, credentials, token, file_id, opener, secrets):
     data = _json_request(
         base_url + "/download",
         _headers(credentials.api_key, token=token, json_body=True),
-        secrets, "download request", opener,
+        secrets, _WHAT_DOWNLOAD_REQUEST, opener,
         body={"file_id": file_id, "sub_format": "srt"},
     )
     if not isinstance(data, dict):
         _fail("OpenSubtitles returned an invalid download response", secrets)
     link = _clean(data.get("link"))
     if not link:
+        # The second refusal path. It already holds the parsed body, so the
+        # timestamp is free here.
+        moment = _parse_reset_time(data.get("reset_time_utc"))
         _fail(
             "OpenSubtitles returned no download link. The quota may be spent; "
-            "this run did not receive a file.",
+            "this run did not receive a file.{}".format(
+                " The quota resets at {}.".format(moment) if moment else ""
+            ),
             secrets,
         )
     if urlsplit(link).scheme != "https":
@@ -668,10 +835,10 @@ def _fetch_link(link, opener, secrets):
     the account credentials there would hand them to a third party for nothing.
     """
     request = _build_request(
-        link, secrets, "subtitle download",
+        link, secrets, _WHAT_FILE_FETCH,
         headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
     )
-    return _open(opener, request, _LINK_TIMEOUT_S, secrets, "subtitle download")
+    return _open(opener, request, _LINK_TIMEOUT_S, secrets, _WHAT_FILE_FETCH)
 
 
 def _decode(payload, secrets):
@@ -734,10 +901,16 @@ def download_subtitle(credentials, file_id, opener=None):
             secrets,
         )
 
-    remaining = response.get("remaining")
-    used = response.get("requests")
+    remaining = _int_field(response.get("remaining"))
+    used = _int_field(response.get("requests"))
+    reset_at = _parse_reset_time(response.get("reset_time_utc"))
     notes = []
-    if isinstance(remaining, int) and not isinstance(remaining, bool):
+    if remaining == 0:
+        # A reset time is noise at 97 remaining and the whole point at 0.
+        notes.append("No downloads left on this account today.{}".format(
+            " The quota resets at {}.".format(reset_at) if reset_at else ""
+        ))
+    elif remaining is not None:
         notes.append(
             "{} download{} left on this account today.".format(
                 remaining, "" if remaining == 1 else "s"
@@ -746,8 +919,9 @@ def download_subtitle(credentials, file_id, opener=None):
     return Download(
         text,
         _text_field(response.get("file_name")),
-        remaining if isinstance(remaining, int) and not isinstance(remaining, bool) else None,
-        used if isinstance(used, int) and not isinstance(used, bool) else None,
+        remaining,
+        used,
         notes,
         len(cues),
+        reset_at,
     )

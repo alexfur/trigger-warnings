@@ -86,14 +86,36 @@ LOGIN_PAYLOAD = json.dumps({
     "base_url": "vip-api.opensubtitles.com",
 })
 
+RESET_UTC = "2026-09-08T00:00:00.000Z"
+
 DOWNLOAD_PAYLOAD = json.dumps({
     "link": LINK,
     "file_name": "The.Thing.1982.srt",
     "requests": 3,
     "remaining": 97,
-    "message": "Your quota will be renewed soon",
+    # The live field is a VIP upsell. It is never surfaced; see QuotaTests.
+    "message": "Your quota will be renewed soon. Upgrade to VIP for more!",
     "reset_time": "23 hours",
+    "reset_time_utc": RESET_UTC,
 })
+
+
+SLEEPS = []
+
+
+def setUpModule():
+    """Swap the retry wait for a recorder, for the whole file.
+
+    A real sleep in a retry path is a suite that gets slower every time someone
+    adds a failure case. Nothing here is allowed to block.
+    """
+    global _REAL_SLEEP
+    _REAL_SLEEP = opensubtitles._sleep
+    opensubtitles._sleep = lambda seconds: SLEEPS.append(seconds)
+
+
+def tearDownModule():
+    opensubtitles._sleep = _REAL_SLEEP
 
 
 class _Response:
@@ -902,6 +924,71 @@ class SecretLeakTests(unittest.TestCase):
 
         self.assertEqual(message, cleaned)
 
+    def test_a_secret_that_is_a_word_in_our_own_message_is_not_mangled(self):
+        """A scrub hit on tool-authored text is a coincidence, not a leak.
+
+        A real credential is high-entropy and cannot appear inside a sentence
+        this module wrote. So a match on our own prose means someone's password
+        happens to be an English word, and blanking it turns a diagnosis into
+        rubble while telling a reader exactly where the word sits.
+        """
+        message = (
+            "OpenSubtitles returned HTTP 406 for the download request. The "
+            "daily download quota for this account is spent."
+        )
+
+        for secret in ("the", "quota", "daily", "account", "spent"):
+            with self.subTest(secret=secret):
+                self.assertEqual(message, opensubtitles._scrub(message, [secret]))
+
+    def test_the_length_rule_is_not_what_closes_the_oracle(self):
+        """Pins the honest claim, so the next reader does not over-trust it.
+
+        Substring redaction of predictable text is an oracle at any length:
+        given the scrubbed output and the template, the secret is recoverable
+        uniquely. ``account`` is seven characters and ``download`` is eight, so
+        no threshold anyone would accept closes it. What closes it is not
+        echoing untrusted bytes, which the download path already does.
+        """
+        template = "the daily download quota for this account"
+
+        def recover(scrubbed):
+            candidates = set()
+            for length in range(1, len(template) + 1):
+                for start in range(len(template) - length + 1):
+                    candidates.add(template[start:start + length])
+            return sorted(
+                word for word in candidates
+                if word.strip() and opensubtitles._scrub(template, [word]) == scrubbed
+            )
+
+        # Long enough to be scrubbed, and still uniquely recoverable.
+        long_word = "download quota for this account"
+        self.assertGreaterEqual(len(long_word), opensubtitles._MIN_SCRUBBABLE_LEN)
+        self.assertEqual(
+            [long_word], recover(opensubtitles._scrub(template, [long_word]))
+        )
+
+    def test_the_threshold_is_a_boundary_not_a_guess(self):
+        limit = opensubtitles._MIN_SCRUBBABLE_LEN
+        message = "prefix {} suffix"
+
+        at = "z" * limit
+        below = "z" * (limit - 1)
+
+        self.assertNotIn(at, opensubtitles._scrub(message.format(at), [at]))
+        self.assertEqual(
+            message.format(below), opensubtitles._scrub(message.format(below), [below])
+        )
+
+    def test_every_real_credential_this_module_holds_is_long_enough(self):
+        """The rule is only safe because nothing genuinely secret falls under it."""
+        for secret in (API_KEY, USERNAME, PASSWORD, TOKEN, LINK, LINK_TOKEN):
+            with self.subTest(secret=len(secret)):
+                self.assertGreaterEqual(
+                    len(secret), opensubtitles._MIN_SCRUBBABLE_LEN
+                )
+
     def test_scrub_still_redacts_where_it_is_relied_on(self):
         cleaned = opensubtitles._scrub(
             "could not fetch " + LINK, [LINK]
@@ -1246,6 +1333,465 @@ class ResponseSizeTests(unittest.TestCase):
         found = opensubtitles.search_subtitles(API_KEY, "The Thing", opener=api)
 
         self.assertEqual(1, len(found.candidates))
+
+
+class QuotaResetTests(unittest.TestCase):
+    """One field is surfaced, parsed and re-rendered. The prose never is.
+
+    ``message`` and ``reset_time`` stay out for a threat model the field
+    sanitiser does not touch: ``_text_field`` was built against terminal
+    forgery, and semantic injection is plain ASCII that survives it intact.
+    The ``--json`` result feeds an agent's context directly, so free server
+    prose there is a prompt-injection surface, not a display bug.
+
+    ``reset_time_utc`` is different in kind because it can be PARSED. Validated
+    and re-emitted through our own formatter, its output alphabet is fixed by
+    construction rather than by a blocklist, which is the same argument
+    ``_resolve_base_url`` already makes about rebuilding from the parsed host.
+    """
+
+    CREDS = property(lambda self: opensubtitles.Credentials(
+        API_KEY, USERNAME, PASSWORD))
+
+    def test_the_wire_spelling_with_a_trailing_z_parses(self):
+        """Python 3.9's fromisoformat rejects the trailing Z this API sends, and
+        3.13 accepts it. Untested, the feature works locally and vanishes on one
+        CI leg, silently, because a parse failure drops the field."""
+        self.assertEqual(
+            "2026-09-08T00:00:00Z",
+            opensubtitles._parse_reset_time("2026-09-08T00:00:00.000Z"),
+        )
+
+    def test_the_other_spellings_parse_too(self):
+        for value in (
+            "2026-09-08T00:00:00+00:00",
+            "2026-09-08T00:00:00z",
+            "2026-09-08T02:00:00+02:00",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    "2026-09-08T00:00:00Z",
+                    opensubtitles._parse_reset_time(value),
+                )
+
+    def test_a_naive_timestamp_is_taken_as_utc(self):
+        """The field is named reset_time_utc, which is the server asserting the
+        zone. Being a few hours out costs a retry, not correctness."""
+        self.assertEqual(
+            "2026-09-08T00:00:00Z",
+            opensubtitles._parse_reset_time("2026-09-08T00:00:00"),
+        )
+
+    def test_anything_unparseable_is_dropped_rather_than_guessed(self):
+        for value in (
+            None, 12345, [], {}, "", "   ", "not a date", "9999-99-99T00:00:00Z",
+            "2026-09-08", "0001-01-01T00:00:00Z", "9999-12-31T00:00:00Z",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(opensubtitles._parse_reset_time(value))
+
+    def test_the_rendered_alphabet_is_fixed_by_construction(self):
+        rendered = opensubtitles._parse_reset_time(RESET_UTC)
+
+        self.assertTrue(
+            set(rendered) <= set("0123456789-T:Z+."),
+            "the re-rendered timestamp is not built from our own alphabet",
+        )
+
+    # -- the 406 path ----------------------------------------------------
+
+    def _quota_error(self, body):
+        from urllib.error import HTTPError
+
+        api = _Api()
+        real = api.__call__
+
+        class _Err(HTTPError):
+            def read(self, limit=None):
+                data = body.encode("utf-8")
+                return data if limit is None else data[:limit]
+
+        def failing(request, timeout=None):
+            if request.full_url.endswith("/download"):
+                raise _Err(request.full_url, 406, "Not Acceptable", {}, None)
+            return real(request, timeout)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError) as caught:
+            opensubtitles.download_subtitle(self.CREDS, 7061050, opener=failing)
+        return str(caught.exception)
+
+    def test_a_406_surfaces_the_reset_time_it_carries(self):
+        """Without this the user who actually hit the cap is the one person who
+        never learns when it lifts: _open raises before the body is read."""
+        message = self._quota_error(json.dumps({"reset_time_utc": RESET_UTC}))
+
+        self.assertIn("2026-09-08T00:00:00Z", message)
+        self.assertIn("quota", message.lower())
+
+    def test_the_406_body_is_parsed_and_never_quoted(self):
+        """The regression lock back to the pass-1 leak: one field comes out,
+        the rest is discarded unread."""
+        marker = "MARKER-DO-NOT-ECHO-4b1c"
+        message = self._quota_error(json.dumps({
+            "reset_time_utc": RESET_UTC,
+            "message": "Upgrade to VIP! " + marker + " " + LINK,
+            "reset_time": marker,
+            "extra": LINK_TOKEN,
+        }))
+
+        self.assertNotIn(marker, message)
+        self.assertNotIn(LINK, message)
+        self.assertNotIn(LINK_TOKEN, message)
+        self.assertNotIn("VIP", message)
+        self.assertIn("2026-09-08T00:00:00Z", message)
+
+    def test_a_hostile_406_body_cannot_break_the_error_path(self):
+        for body in ("not json", "[]", "null", '{"reset_time_utc": []}',
+                     '{"reset_time_utc": "not a date"}', "x" * 200000):
+            with self.subTest(body=body[:20]):
+                message = self._quota_error(body)
+                self.assertIn("406", message)
+                self.assertNotIn("x" * 100, message)
+
+    # -- the second refusal path -----------------------------------------
+
+    def test_a_200_with_no_link_surfaces_the_reset_time_too(self):
+        """That path already holds the parsed body and was discarding it."""
+        api = _Api(download=json.dumps({
+            "file_name": "x.srt", "remaining": 0, "reset_time_utc": RESET_UTC,
+            "message": "Upgrade to VIP!",
+        }))
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError) as caught:
+            opensubtitles.download_subtitle(self.CREDS, 7061050, opener=api)
+
+        message = str(caught.exception)
+        self.assertIn("2026-09-08T00:00:00Z", message)
+        self.assertNotIn("VIP", message)
+
+    # -- the success path -------------------------------------------------
+
+    def test_the_reset_note_appears_only_when_the_quota_is_spent(self):
+        """A reset time is noise at 97 remaining and the point at 0."""
+        spent = _Api(download=json.dumps({
+            "link": LINK, "file_name": "x.srt", "remaining": 0,
+            "reset_time_utc": RESET_UTC,
+        }))
+        plenty = _Api()
+
+        at_zero = opensubtitles.download_subtitle(self.CREDS, 1, opener=spent)
+        at_97 = opensubtitles.download_subtitle(self.CREDS, 1, opener=plenty)
+
+        self.assertTrue(any("2026-09-08T00:00:00Z" in n for n in at_zero.notes))
+        self.assertFalse(any("2026-09-08" in n for n in at_97.notes))
+        self.assertEqual("2026-09-08T00:00:00Z", at_97.reset_at)
+
+    def test_the_server_prose_never_reaches_a_note(self):
+        result = opensubtitles.download_subtitle(self.CREDS, 1, opener=_Api())
+
+        joined = " ".join(result.notes) + str(result.reset_at)
+        self.assertNotIn("VIP", joined)
+        self.assertNotIn("23 hours", joined)
+
+
+class QuotaSurfaceTests(unittest.TestCase):
+    """The machine-readable surfaces carry the timestamp, not the prose."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.workdir = Path(self.tempdir.name)
+        self.output = self.workdir / "dialogue.srt"
+        self.provenance = self.workdir / "run.json"
+        self.env = {
+            "OPENSUBTITLES_API_KEY": API_KEY,
+            "OPENSUBTITLES_USERNAME": USERNAME,
+            "OPENSUBTITLES_PASSWORD": PASSWORD,
+        }
+
+    def _run(self, provenance=False):
+        argv = ["--os-file", "7061050", "--output", str(self.output)]
+        if provenance:
+            argv += ["--provenance", str(self.provenance)]
+        result = {}
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with mock.patch("trigger_warnings.opensubtitles.urlopen", _Api()):
+                cli.run(cli.build_parser().parse_args(argv), lambda *a: None, result)
+        return result
+
+    def test_the_json_source_carries_the_reset_time_and_the_usage(self):
+        source = self._run()["source"]
+
+        self.assertEqual("2026-09-08T00:00:00Z", source["quotaResetsAt"])
+        self.assertEqual(3, source["downloadsUsedToday"])
+        self.assertEqual(97, source["downloadsRemainingToday"])
+
+    def test_the_provenance_carries_it_too_and_still_no_prose(self):
+        self._run(provenance=True)
+
+        text = self.provenance.read_text(encoding="utf-8")
+        data = json.loads(text)
+        self.assertEqual("2026-09-08T00:00:00Z", data["source"]["quotaResetsAt"])
+        self.assertNotIn("VIP", text)
+        self.assertNotIn("23 hours", text)
+
+    def test_the_json_result_carries_no_server_prose_at_all(self):
+        payload = json.dumps(self._run(), sort_keys=True)
+
+        self.assertNotIn("VIP", payload)
+        self.assertNotIn("23 hours", payload)
+
+
+class PostChargeAdviceTests(unittest.TestCase):
+    """After the POST, the quota is already spent, and the advice must say so.
+
+    ``_status_hint`` was keyed on the status code alone, so a failure fetching
+    the link reused the pre-charge wording. Each of these told the user to run
+    the command again, which re-POSTs and spends a second unit out of a daily
+    allowance that can be twenty, without ever saying the first was charged.
+    """
+
+    def setUp(self):
+        SLEEPS[:] = []
+        self.creds = opensubtitles.Credentials(API_KEY, USERNAME, PASSWORD)
+
+    def _link_fails(self, code, body="", link_attempts=None):
+        from urllib.error import HTTPError
+
+        api = _Api()
+        real = api.__call__
+        seen = []
+
+        class _Err(HTTPError):
+            def read(self, limit=None):
+                data = body.encode("utf-8")
+                return data if limit is None else data[:limit]
+
+        def failing(request, timeout=None):
+            if request.full_url == LINK:
+                seen.append(1)
+                raise _Err(request.full_url, code, "err", {}, None)
+            return real(request, timeout)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError) as caught:
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=failing)
+        if link_attempts is not None:
+            self.assertEqual(link_attempts, len(seen))
+        return str(caught.exception), api
+
+    def test_every_post_charge_failure_says_a_download_was_already_spent(self):
+        for code in (406, 410, 429, 503):
+            with self.subTest(code=code):
+                message, _ = self._link_fails(code)
+                self.assertIn("already", message.lower())
+                self.assertIn("charged", message.lower())
+
+    def test_a_post_charge_failure_never_tells_you_to_just_run_it_again(self):
+        """The 410 text said 'Run the download again to get a fresh one',
+        which is an instruction to spend another unit, unlabelled."""
+        message, _ = self._link_fails(410)
+
+        self.assertIn("spends another", message.lower())
+
+    def test_a_406_after_the_link_was_issued_does_not_claim_the_quota_is_spent(self):
+        """A link came back, so it demonstrably was not."""
+        message, _ = self._link_fails(406)
+
+        self.assertNotIn("quota for this account is spent", message)
+
+    def test_the_reset_time_is_not_parsed_out_of_a_cdn_body(self):
+        """Benign but incoherent: a quota reset belongs to the API's 406, not
+        to whatever a file server puts in its own error document."""
+        message, _ = self._link_fails(
+            406, json.dumps({"reset_time_utc": "2026-09-08T00:00:00.000Z"})
+        )
+
+        self.assertNotIn("2026-09-08", message)
+
+    def test_the_download_post_still_reports_a_quota_406_properly(self):
+        from urllib.error import HTTPError
+
+        api = _Api()
+        real = api.__call__
+
+        class _Err(HTTPError):
+            def read(self, limit=None):
+                return json.dumps({"reset_time_utc": RESET_UTC}).encode()
+
+        def failing(request, timeout=None):
+            if request.full_url.endswith("/download"):
+                raise _Err(request.full_url, 406, "err", {}, None)
+            return real(request, timeout)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError) as caught:
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=failing)
+
+        message = str(caught.exception)
+        self.assertIn("quota", message.lower())
+        self.assertIn("2026-09-08T00:00:00Z", message)
+
+    def test_the_pre_charge_406_names_its_other_documented_causes(self):
+        from urllib.error import HTTPError
+
+        api = _Api()
+        real = api.__call__
+
+        def failing(request, timeout=None):
+            if request.full_url.endswith("/download"):
+                raise HTTPError(request.full_url, 406, "err", {}, None)
+            return real(request, timeout)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError) as caught:
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=failing)
+
+        message = str(caught.exception).lower()
+        self.assertIn("file id", message)
+
+    def test_the_rate_limit_figure_is_the_general_one_not_the_login_one(self):
+        """~1/s is the SIGN-IN limit. The general limit is about 5/s per IP, and
+        stating the stricter number as general sends the user to fix a
+        non-problem."""
+        hint = opensubtitles._status_hint(429, opensubtitles._WHAT_SEARCH)
+
+        self.assertIn("5", hint)
+        self.assertIn("sign-in", hint.lower())
+
+
+class LinkRetryTests(unittest.TestCase):
+    """Only one request in the run is provably free to repeat."""
+
+    def setUp(self):
+        SLEEPS[:] = []
+        self.creds = opensubtitles.Credentials(API_KEY, USERNAME, PASSWORD)
+
+    def _flaky_link(self, failures, error):
+        api = _Api()
+        real = api.__call__
+        state = {"n": 0}
+
+        def opener(request, timeout=None):
+            if request.full_url == LINK:
+                state["n"] += 1
+                if state["n"] <= failures:
+                    raise error(request.full_url)
+            return real(request, timeout)
+
+        return opener, api, state
+
+    def _http(self, code):
+        from urllib.error import HTTPError
+        return lambda url: HTTPError(url, code, "err", {}, None)
+
+    def test_a_429_on_the_link_is_retried_once_and_succeeds(self):
+        opener, api, state = self._flaky_link(1, self._http(429))
+
+        result = opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(SRT_BODY, result.text)
+        self.assertEqual(2, state["n"], "the link was not retried exactly once")
+        self.assertEqual(1, len(SLEEPS), "the retry did not wait")
+
+    def test_a_503_on_the_link_is_retried_too(self):
+        opener, api, state = self._flaky_link(1, self._http(503))
+
+        opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(2, state["n"])
+
+    def test_the_retry_does_not_spend_a_second_download(self):
+        """The whole justification: the charge happened at the POST, so a link
+        retry is free. If it re-POSTed it would cost one."""
+        opener, api, _ = self._flaky_link(1, self._http(429))
+
+        opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        posts = [r for r in api.requests if r.full_url.endswith("/download")]
+        self.assertEqual(1, len(posts), "a retry re-POSTed and spent another unit")
+
+    def test_the_link_is_retried_only_once_then_reported(self):
+        opener, api, state = self._flaky_link(5, self._http(429))
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError):
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(2, state["n"], "retried more than once")
+
+    def test_an_ambiguous_transport_failure_is_never_retried(self):
+        """A received 429 means the server answered. A timeout does not, and a
+        lost response is indistinguishable from a rejected one."""
+        from urllib.error import URLError
+
+        opener, api, state = self._flaky_link(1, lambda url: URLError("timed out"))
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError):
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(1, state["n"], "an ambiguous failure was retried")
+        self.assertEqual([], SLEEPS)
+
+    def test_a_404_on_the_link_is_not_retried(self):
+        opener, api, state = self._flaky_link(1, self._http(404))
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError):
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(1, state["n"])
+
+    def test_the_download_post_is_never_retried(self):
+        """It spends quota, and whether a refused POST is counted is
+        undocumented. The rule is that it is spent exactly once."""
+        from urllib.error import HTTPError
+
+        api = _Api()
+        real = api.__call__
+        posts = []
+
+        def opener(request, timeout=None):
+            if request.full_url.endswith("/download"):
+                posts.append(1)
+                raise HTTPError(request.full_url, 429, "err", {}, None)
+            return real(request, timeout)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError):
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(1, len(posts))
+        self.assertEqual([], SLEEPS)
+
+    def test_the_login_is_never_retried(self):
+        """It costs no quota, but it is the endpoint the vendor limits hardest
+        and asks callers not to hammer. Retrying is the flooding the limit
+        exists to prevent."""
+        from urllib.error import HTTPError
+
+        logins = []
+
+        def opener(request, timeout=None):
+            logins.append(1)
+            raise HTTPError(request.full_url, 429, "err", {}, None)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError):
+            opensubtitles.download_subtitle(self.creds, 7061050, opener=opener)
+
+        self.assertEqual(1, len(logins))
+
+    def test_a_search_is_never_retried(self):
+        from urllib.error import HTTPError
+
+        calls = []
+
+        def opener(request, timeout=None):
+            calls.append(1)
+            raise HTTPError(request.full_url, 503, "err", {}, None)
+
+        with self.assertRaises(opensubtitles.OpenSubtitlesError):
+            opensubtitles.search_subtitles(API_KEY, "X", opener=opener)
+
+        self.assertEqual(1, len(calls))
+
+    def test_no_test_in_this_file_can_actually_sleep(self):
+        """Guards the guard: setUpModule must really have replaced the wait."""
+        self.assertNotEqual(opensubtitles._sleep, __import__("time").sleep)
 
 
 class CliSearchModeTests(unittest.TestCase):
@@ -1689,6 +2235,154 @@ class ModeConflictTests(unittest.TestCase):
         self.assertEqual(cli.EXIT_OK, status)
         self.assertEqual("generate", result["mode"])
         self.assertTrue(output.is_file())
+
+
+class FlagPresenceParityTests(unittest.TestCase):
+    """One question, answered the same way by every guard in the dispatch.
+
+    A flag spelled out at its own default is still a flag the caller asked for.
+    Comparing values cannot see that, and the blast radius is exactly the five
+    flags whose defaults are typeable: --lead, --tail, --offset, --language and
+    --os-language. Everything else in the candidate list defaults to None,
+    --category to an empty list that any append makes non-empty, and --dry-run
+    is a store_true.
+    """
+
+    DEFAULTED = (
+        ("--lead", "20"),
+        ("--tail", "0"),
+        ("--offset", "0"),
+        ("--language", "eng"),
+        ("--os-language", "en"),
+    )
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.workdir = Path(self.tempdir.name)
+        self.subtitles = self.workdir / "dialogue.srt"
+        self.subtitles.write_text(SRT_BODY, encoding="utf-8")
+        self.events = self.workdir / "events.json"
+        self.events.write_text(
+            json.dumps([{"start": 2.0, "label": "gore"}]), encoding="utf-8"
+        )
+        self.env = {"DDD_API_KEY": "ddd-key", "OPENSUBTITLES_API_KEY": API_KEY}
+        # A search mode prints its candidate table by design; keep it out of
+        # the runner's output.
+        self.stdout = io.StringIO()
+        patcher = contextlib.redirect_stdout(self.stdout)
+        patcher.__enter__()
+        self.addCleanup(patcher.__exit__, None, None, None)
+
+    def _run(self, argv):
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            return cli.run(cli.build_parser().parse_args(argv), lambda *a: None, {})
+
+    def _fails(self, argv):
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaises(core.TriggerWarningsError) as caught:
+                cli.run(cli.build_parser().parse_args(argv), lambda *a: None, {})
+        return str(caught.exception)
+
+    def test_the_ddd_search_guard_sees_a_defaulted_flag(self):
+        for flag, value in self.DEFAULTED:
+            with self.subTest(flag=flag):
+                message = self._fails(["--ddd-search", "The Thing", flag, value])
+                self.assertIn(flag, message)
+
+    def test_numeric_aliases_of_a_default_are_caught_too(self):
+        """20.0 and 2e1 both compare equal to 20.0, and -0 to 0. A value test
+        can never catch these; a presence test catches all of them at once."""
+        for flag, value in (
+            ("--lead", "20.0"), ("--lead", "2e1"),
+            ("--tail", "-0"), ("--offset", "-0.0"),
+        ):
+            with self.subTest(flag=flag, value=value):
+                message = self._fails(["--ddd-search", "The Thing", flag, value])
+                self.assertIn(flag, message)
+
+    def test_the_generation_path_sees_a_defaulted_os_language(self):
+        """The third site. Its siblings are sound only because --os-year,
+        --os-season and --os-episode default to None."""
+        message = self._fails([
+            "--subtitles", str(self.subtitles), "--events", str(self.events),
+            "--output", str(self.workdir / "warned.srt"),
+            "--os-language", "en",
+        ])
+
+        self.assertIn("--os-language", message)
+
+    def test_the_documented_ddd_command_is_not_over_rejected(self):
+        """The risk of a presence check is that it becomes too eager, and this
+        exact command is the one in the README."""
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with mock.patch(
+                "trigger_warnings.ddd.search_items", return_value=[]
+            ) as search:
+                status = cli.run(cli.build_parser().parse_args(
+                    ["--ddd-search", "Old Yeller", "--ddd-year", "1957"]
+                ), lambda *a: None, {})
+
+        self.assertEqual(cli.EXIT_OK, status)
+        search.assert_called_once()
+
+    def test_the_documented_os_search_command_is_not_over_rejected(self):
+        api = _Api()
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with mock.patch("trigger_warnings.opensubtitles.urlopen", api):
+                status = cli.run(cli.build_parser().parse_args([
+                    "--os-search", "Old Yeller", "--os-year", "1957",
+                    "--os-language", "en",
+                ]), lambda *a: None, {})
+
+        self.assertEqual(cli.EXIT_OK, status)
+
+    def test_a_plain_generation_run_is_still_accepted(self):
+        output = self.workdir / "warned.srt"
+
+        status = self._run([
+            "--subtitles", str(self.subtitles), "--events", str(self.events),
+            "--output", str(output),
+        ])
+
+        self.assertEqual(cli.EXIT_OK, status)
+        self.assertTrue(output.is_file())
+
+    def test_a_search_term_that_looks_like_a_flag_is_not_one(self):
+        """``--ddd-search=--lead`` names a title, not a flag. The argv scan must
+        read the token before the ``=`` and nothing after it, or a refactor
+        could turn a search term into a spurious conflict."""
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with mock.patch(
+                "trigger_warnings.ddd.search_items", return_value=[]
+            ) as search:
+                status = cli.run(
+                    cli.build_parser().parse_args(["--ddd-search=--lead"]),
+                    lambda *a: None, {},
+                )
+
+        self.assertEqual(cli.EXIT_OK, status)
+        self.assertEqual("--lead", search.call_args[0][1])
+
+    def test_a_value_after_the_separator_is_not_read_as_a_flag(self):
+        parser = cli.build_parser()
+
+        supplied = parser._supplied_options(
+            ["--os-search", "X", "--", "--lead", "5"]
+        )
+
+        self.assertIn("--os-search", supplied)
+        self.assertNotIn("--lead", supplied)
+
+    def test_the_ddd_guard_still_rejects_the_opensubtitles_key_flag(self):
+        """Guards the delegation: --os-api-key is in the DDD guard's own list
+        and would be silently dropped if it were not in the shared one."""
+        message = self._fails(
+            ["--ddd-search", "The Thing", "--os-api-key", API_KEY]
+        )
+
+        self.assertIn("--os-api-key", message)
+        self.assertNotIn(API_KEY, message)
 
 
 class JsonInterfaceTests(unittest.TestCase):
