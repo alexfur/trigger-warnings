@@ -1,7 +1,8 @@
 # Trigger warnings
 
 Add advance warnings to a subtitle track while keeping its dialogue. Supply an
-SRT file and your own event timestamps. The tool produces an ASS or SRT file for
+SRT file plus local event timestamps, or explicitly request timestamped ratings
+from the official DoesTheDogDie API. The tool produces an ASS or SRT file for
 local playback, with a generic **TRIGGER INCOMING** message above the dialogue.
 
 This is an experimental developer tool, not a source of trigger information.
@@ -58,6 +59,31 @@ Then replace `python3 -m trigger_warnings` with `trigger-warnings`.
 
 Existing files are never replaced. Pick a new output name when regenerating.
 The tool does not modify your video or original subtitle file.
+
+### Use the official DoesTheDogDie API
+
+This optional source requests ratings for one official API item and converts only
+timestamped ratings into the same local event pipeline. It makes no persistent
+cache. Use your own API key, never someone else's.
+
+Set the key in the environment so it does not appear in shell history or process
+arguments, then pass the item ID from the API's title lookup:
+
+```sh
+export DDD_API_KEY='your-key'
+trigger-warnings --subtitles dialogue.srt --ddd-item 10752 \
+  --category 'a dog dies' --output movie.warned.ass
+```
+
+`--ddd-api-key KEY` is available when an environment variable is impractical,
+but can expose the key to shell history or process inspection. It is never
+written to output, logs or cache files.
+
+The tool prints `Powered by DoesTheDogDie.com` when it uses this source. The API
+may return community timestamps, which are incomplete and unverified. A result
+with no timestamped ratings is an error, not a claim that the title has no
+triggers. Scene Alerts require the provider's separate written agreement and
+the appropriate API entitlement. Read and comply with the [API terms](https://www.doesthedogdie.com/api/terms), including its attribution, caching and use restrictions.
 
 ### Extract subtitles and render a preview
 
@@ -119,7 +145,9 @@ Run `trigger-warnings --help` for the complete command syntax.
 | Option | Behaviour |
 | --- | --- |
 | `--subtitles PATH` | Input SRT dialogue. Without it, `--video` supplies embedded subtitles. |
-| `--events PATH` | Event JSON. Required for generation. |
+| `--events PATH` | Local event JSON. Required unless `--ddd-item` is used. |
+| `--ddd-item ID` | Official DoesTheDogDie API item ID. Mutually exclusive with `--events`. |
+| `--ddd-api-key KEY` | Official API key. Prefer the `DDD_API_KEY` environment variable. |
 | `--output PATH` | New `.ass` or `.srt` file. Required for generation. |
 | `--category LABEL` | Select a category; repeat for several. Omitted selects all. |
 | `--lead SECONDS` | Advance warning duration, default 20. Non-negative. |
@@ -143,8 +171,8 @@ A constant offset does not correct playback-speed differences, inserted scenes,
 adverts, intro skipping or different edits. Recheck synchronisation at several
 points. Two-point calibration is not implemented.
 
-There is no browser extension, data service, automatic scene detection or
-third-party timeline importer. Streaming compatibility is not claimed.
+There is no browser extension, automatic scene detection or unofficial timeline
+importer. Streaming compatibility is not claimed.
 
 Automatic stream selection refuses a choice between matching tracks, including
 regular and SDH subtitles. Run `--list-streams` and pass `--stream INDEX` when
@@ -163,7 +191,8 @@ not a browser playback test.
 The agent-neutral [SKILL.md](skills/trigger-warnings/SKILL.md) guides an assistant
 through input selection, generation and playback checks. Install the Python tool
 first, then copy that skill directory into your agent's skills directory. The
-skill does not fetch event data or infer missing timestamps.
+skill accepts local event data or the opt-in official API source; it does not
+infer missing timestamps.
 
 ## Related work
 

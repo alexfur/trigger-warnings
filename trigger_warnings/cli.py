@@ -72,14 +72,24 @@ def _stream_index(text):
     return value
 
 
+def _ddd_item_id(text):
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a positive DoesTheDogDie item id")
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive DoesTheDogDie item id")
+    return value
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="trigger-warnings",
         description=(
-            "Add advance warnings to a dialogue subtitle track using event "
-            "timestamps you supply. This tool does not detect scenes, does not "
-            "fetch event data and cannot check that your timestamps describe "
-            "your video."
+            "Add advance warnings to a dialogue subtitle track using local event "
+            "timestamps or an explicit official DoesTheDogDie API request. This "
+            "tool does not detect scenes and cannot check that timestamps "
+            "describe your video."
         ),
         epilog=(
             "Existing files are never replaced. A missing warning can mean missing "
@@ -93,7 +103,15 @@ def build_parser():
     )
     parser.add_argument(
         "--events", type=Path, metavar="PATH",
-        help="event JSON array; required for generation",
+        help="local event JSON array; mutually exclusive with --ddd-item",
+    )
+    parser.add_argument(
+        "--ddd-item", type=_ddd_item_id, metavar="ID",
+        help="official DoesTheDogDie API item id; mutually exclusive with --events",
+    )
+    parser.add_argument(
+        "--ddd-api-key", metavar="KEY",
+        help="official DoesTheDogDie API key; alternatively set DDD_API_KEY",
     )
     parser.add_argument(
         "--output", type=Path, metavar="PATH",
@@ -382,6 +400,29 @@ def _report_categories(kept, dropped, report):
         report("Excluded categories: none.")
 
 
+def _load_ddd_events(args, report):
+    """Fetch one user's official API data without persisting a copy of it."""
+    from . import ddd
+
+    api_key = args.ddd_api_key or os.environ.get("DDD_API_KEY")
+    source = ddd.load_item_events(api_key, args.ddd_item)
+    report(ddd.ATTRIBUTION)
+    report(
+        "Fetched {} timestamped DoesTheDogDie rating{} for item {} ({} community, "
+        "{} Scene Alert{}).".format(
+            len(source.events),
+            "" if len(source.events) == 1 else "s",
+            args.ddd_item,
+            source.community,
+            source.scene_alerts,
+            "" if source.scene_alerts == 1 else "s",
+        )
+    )
+    for note in source.notes:
+        report(note)
+    return source.events
+
+
 # ------------------------------------------------------------------------- the run
 
 
@@ -390,7 +431,8 @@ def run(args, report):
         if args.video is None:
             raise TriggerWarningsError("--list-streams needs --video")
         for flag, value in (("--output", args.output), ("--verify", args.verify),
-                            ("--events", args.events)):
+                            ("--events", args.events), ("--ddd-item", args.ddd_item),
+                            ("--ddd-api-key", args.ddd_api_key)):
             if value is not None:
                 raise TriggerWarningsError(
                     "--list-streams does not generate output; run it without "
@@ -399,8 +441,14 @@ def run(args, report):
         _check_inputs_exist([("--video", args.video)])
         return list_streams(args, report)
 
-    if args.events is None or args.output is None:
-        raise TriggerWarningsError("--events and --output are both required")
+    if args.output is None:
+        raise TriggerWarningsError("--output is required")
+    if args.events is None and args.ddd_item is None:
+        raise TriggerWarningsError("supply --events, or --ddd-item with an API key")
+    if args.events is not None and args.ddd_item is not None:
+        raise TriggerWarningsError("--events and --ddd-item are mutually exclusive")
+    if args.ddd_item is None and args.ddd_api_key is not None:
+        raise TriggerWarningsError("--ddd-api-key needs --ddd-item")
     if args.verify is not None and args.video is None:
         raise TriggerWarningsError(
             "--verify renders a frame from a video, so it needs --video"
@@ -425,7 +473,12 @@ def run(args, report):
         [("--output", args.output), ("--verify", args.verify)], inputs
     )
 
-    events = core.load_events(_read_text(args.events, "--events"), str(args.events))
+    if args.ddd_item is not None:
+        events = _load_ddd_events(args, report)
+    else:
+        events = core.load_events(
+            _read_text(args.events, "--events"), str(args.events)
+        )
     kept, dropped = core.select_events(events, args.category)
     _report_categories(kept, dropped, report)
 

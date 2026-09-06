@@ -1,6 +1,6 @@
 ---
 name: trigger-warnings
-description: Add advance trigger warnings to local dialogue subtitles using supplied event timestamps and the trigger-warnings CLI. Use when preparing warning subtitles for VLC or checking warning placement and synchronisation. Does not find or infer scene timestamps.
+description: Add advance trigger warnings to local dialogue subtitles using supplied event timestamps or the opt-in official DoesTheDogDie API source. Use when preparing warning subtitles for VLC or checking warning placement and synchronisation. Does not infer scene timestamps.
 ---
 
 # Trigger warnings
@@ -12,8 +12,10 @@ from the repository. Read `--help` before constructing the command.
 
 Confirm the dialogue SRT, event JSON, selected categories and video edition.
 Use only timestamps the user supplies or authorises from a permitted source.
-Do not fetch protected timelines, copy subscriber-only records, invent scene
-times or treat a film summary as timing data.
+The official DoesTheDogDie API is permitted only when the user supplies their
+own API key and the requested tier grants access. Do not fetch protected
+timelines, copy subscriber-only records, invent scene times or treat a film
+summary as timing data.
 
 Events are a JSON array of `{start, end, label, severity}` records. `end` and
 `severity` are optional. Times are non-negative seconds or `HH:MM:SS.mmm`.
@@ -32,6 +34,18 @@ Run, substituting the user's paths and categories:
 trigger-warnings --subtitles dialogue.srt --events events.json \
   --category 'loud noises' --lead 20 --offset 0 --output movie.warned.ass
 ```
+
+For the official API source, prefer an environment variable over putting a key
+in the command line. Use `--ddd-item ID` in place of `--events`:
+
+```sh
+DDD_API_KEY='user-supplied-key' trigger-warnings --subtitles dialogue.srt \
+  --ddd-item 10752 --output movie.warned.ass
+```
+
+Read the attribution and data-quality notes in the terminal report. Community
+timestamps are incomplete. An API response without timestamped ratings is not
+evidence that a title is free of triggers.
 
 Use a new output filename. Never delete or replace the user's original subtitles
 to resolve a file-exists error. Do not shift dialogue to compensate for event

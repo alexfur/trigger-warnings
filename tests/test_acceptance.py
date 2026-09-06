@@ -5,7 +5,7 @@ command-line contract only. They drive `python3 -m trigger_warnings` as a
 subprocess and never import the package, so they make no assumption about
 internal module layout, function names, or data structures.
 
-Frozen contract under test:
+Core local-file contract under test:
 
     python3 -m trigger_warnings --subtitles dialogue.srt --events events.json \
         --output warned.ass|warned.srt [--category LABEL]... [--lead 20] \
@@ -886,6 +886,8 @@ class TestCliContract(CliTestCase):
         for flag in (
             "--subtitles",
             "--events",
+            "--ddd-item",
+            "--ddd-api-key",
             "--output",
             "--category",
             "--lead",
@@ -902,18 +904,14 @@ class TestCliContract(CliTestCase):
             self.run_cli("--subtitles", self.subtitles).returncode, 0
         )
 
-    def test_no_reference_to_any_upstream_trigger_database(self):
-        """The public tool is source-agnostic by decision. Nothing in its output
-        or its help text may name or imply a particular upstream provider."""
+    def test_local_event_output_has_no_provider_specific_text(self):
+        """A local event file remains provider-neutral even though an optional
+        official API source is now available."""
         _, text = self.build(self.EVENT)
-        haystacks = [text, self.run_cli("--help").stdout]
-        for haystack in haystacks:
-            lowered = haystack.lower()
-            for forbidden in ("doesthedogdie", "does the dog die", "dogdie"):
-                self.assertNotIn(forbidden, lowered)
-            # Word-bounded so ordinary words containing the letters (e.g. "added")
-            # do not trip the check.
-            self.assertIsNone(re.search(r"\bddd\b", lowered))
+        lowered = text.lower()
+        for forbidden in ("doesthedogdie", "does the dog die", "dogdie"):
+            self.assertNotIn(forbidden, lowered)
+        self.assertIsNone(re.search(r"\bddd\b", lowered))
 
     def test_output_is_utf8_and_reparses(self):
         out_path, text = self.build(self.EVENT)
