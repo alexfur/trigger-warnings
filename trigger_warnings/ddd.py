@@ -11,17 +11,23 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from . import __version__
 from .core import Event, TriggerWarningsError
 
 
 API_BASE_URL = "https://www.doesthedogdie.com/api/v3"
 ATTRIBUTION = "Powered by DoesTheDogDie.com"
+#: Derived from the package version rather than written out, because the
+#: literal that used to sit here said 0.2 for the whole of 0.3: a stale
+#: version is invisible locally and only ever wrong at the far end.
+USER_AGENT = "trigger-warnings/{}".format(__version__)
 _TIME_FIELDS = ("position1", "position2", "position3")
 _SAFE_TIME_FIELDS = ("safePosition1", "safePosition2", "safePosition3")
 
 __all__ = [
     "API_BASE_URL",
     "ATTRIBUTION",
+    "USER_AGENT",
     "DddApiError",
     "DddEvents",
     "load_item_events",
@@ -69,7 +75,7 @@ def _request_json(path, api_key, opener=urlopen):
         headers={
             "X-API-KEY": api_key,
             "Accept": "application/json",
-            "User-Agent": "trigger-warnings/0.2",
+            "User-Agent": USER_AGENT,
         },
     )
     try:

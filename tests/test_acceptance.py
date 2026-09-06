@@ -1641,8 +1641,68 @@ class TestFilesystemSafety(CliTestCase):
             "--output", link,
         )
         self.assertNotEqual(result.returncode, 0)
+        self.assert_no_traceback(result)
+        self.assertIn(
+            "symbolic link",
+            result.stderr,
+            "the refusal must name the link, not blame a phantom racing writer",
+        )
         self.assertFalse(
             hidden.exists(), "wrote through a dangling symlink to an unnamed path"
+        )
+
+    def test_dry_run_refuses_a_dangling_symlink_output(self):
+        """The refusal must be a check of our own, not a POSIX side effect.
+
+        ``open(O_CREAT | O_EXCL)`` fails on a symlink whatever it points at, so
+        on Linux and macOS the write itself catches this and hides whether the
+        tool ever looked. Windows resolves the reparse point and creates the
+        target instead, so the same code writes to an unnamed path there. A dry
+        run never reaches the write, which makes this one assertion behave the
+        same on every platform.
+        """
+        if not self.supports_symlinks():
+            self.skipTest("this platform or account cannot create symlinks")
+        hidden = self.workdir / "elsewhere.srt"
+        link = self.workdir / "warned.srt"
+        os.symlink(str(hidden), str(link))
+        events_path = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--dry-run",
+            "--subtitles", self.subtitles,
+            "--events", events_path,
+            "--output", link,
+        )
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            "--dry-run promised a run that would write to an unnamed path",
+        )
+        self.assert_no_traceback(result)
+        self.assertIn("symbolic link", result.stderr)
+        self.assertFalse(hidden.exists())
+
+    def test_dangling_symlink_at_a_sidecar_target_is_refused(self):
+        """Every published path is checked, not just --output."""
+        if not self.supports_symlinks():
+            self.skipTest("this platform or account cannot create symlinks")
+        hidden = self.workdir / "elsewhere.json"
+        link = self.workdir / "run.json"
+        os.symlink(str(hidden), str(link))
+        events_path = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--subtitles", self.subtitles,
+            "--events", events_path,
+            "--output", self.workdir / "warned.srt",
+            "--provenance", link,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_no_traceback(result)
+        self.assertIn("symbolic link", result.stderr)
+        self.assertFalse(hidden.exists())
+        self.assertFalse(
+            (self.workdir / "warned.srt").exists(),
+            "a refused sidecar must leave no half-published run behind",
         )
 
     def test_output_path_that_is_a_directory_fails_cleanly(self):
@@ -1853,3 +1913,195 @@ class TestAdjudicatedContract(CliTestCase):
                     "--output", self.workdir / out,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class TestOpenSubtitlesCommandSurface(CliTestCase):
+    """The OpenSubtitles modes, exercised as a subprocess and never on a network.
+
+    Every command below is refused during argument validation, before any
+    request could be made. The environment is scrubbed of OpenSubtitles
+    credentials in setUp so that a developer who happens to export a real key
+    cannot turn this suite into a live API client.
+    """
+
+    EVENT = [{"start": 60, "end": 64, "label": "gore"}]
+
+    CREDENTIAL_VARIABLES = (
+        "OPENSUBTITLES_API_KEY",
+        "OPENSUBTITLES_USERNAME",
+        "OPENSUBTITLES_PASSWORD",
+        "DDD_API_KEY",
+    )
+
+    def setUp(self):
+        super().setUp()
+        # Not "dialogue.srt": the base fixture already occupies that name with
+        # the input track, and an existing target is refused before anything
+        # else, which would mask the failure each test is actually about.
+        self.download_target = self.workdir / "downloaded.srt"
+        removed = {}
+        for name in self.CREDENTIAL_VARIABLES:
+            if name in os.environ:
+                removed[name] = os.environ.pop(name)
+        self.addCleanup(os.environ.update, removed)
+
+    def test_the_opensubtitles_flags_are_documented(self):
+        result = self.run_cli("--help")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for flag in ("--os-search", "--os-year", "--os-season", "--os-episode",
+                     "--os-language", "--os-file", "--os-api-key"):
+            self.assertIn(flag, result.stdout, "{} is undocumented".format(flag))
+
+    def test_help_says_the_password_has_no_flag(self):
+        """The absence of a flag is a deliberate feature, so it is written down.
+        Otherwise the next reader adds one as a convenience."""
+        result = self.run_cli("--help")
+
+        self.assertIn("OPENSUBTITLES_API_KEY", result.stdout)
+        self.assertIn("environment", result.stdout)
+
+    def test_there_is_no_username_or_password_flag(self):
+        for flag in ("--os-username", "--os-password", "--os-user", "--os-pass"):
+            with self.subTest(flag=flag):
+                result = self.run_cli(
+                    "--os-file", "1", "--output", self.download_target,
+                    flag, "value",
+                )
+                self.assert_failed(result)
+                self.assertIn("unrecognized arguments", result.stderr)
+
+    def test_search_without_an_api_key_names_the_variable(self):
+        result = self.run_cli("--os-search", "The Thing")
+
+        self.assert_failed(result)
+        self.assertIn("OPENSUBTITLES_API_KEY", result.stderr)
+
+    def test_download_without_credentials_names_the_missing_variable(self):
+        output = self.download_target
+        result = self.run_cli(
+            "--os-file", "7061050", "--output", output, "--os-api-key", "k",
+        )
+
+        self.assert_failed(result, output)
+        self.assertIn("OPENSUBTITLES_USERNAME", result.stderr)
+
+    def test_download_refuses_an_output_that_is_not_srt(self):
+        output = self.workdir / "downloaded.ass"
+        result = self.run_cli("--os-file", "7061050", "--output", output)
+
+        self.assert_failed(result, output)
+        self.assertIn(".srt", result.stderr)
+
+    def test_download_without_an_output_is_refused(self):
+        result = self.run_cli("--os-file", "7061050")
+
+        self.assert_failed(result)
+        self.assertIn("--output", result.stderr)
+
+    def test_search_refuses_generation_flags(self):
+        events_path = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--os-search", "The Thing",
+            "--subtitles", self.subtitles,
+            "--events", events_path,
+            "--output", self.workdir / "warned.srt",
+        )
+
+        self.assert_failed(result, self.workdir / "warned.srt")
+        self.assertIn("--os-search", result.stderr)
+        self.assertIn("--output", result.stderr)
+
+    def test_download_refuses_generation_flags(self):
+        events_path = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--os-file", "7061050",
+            "--output", self.download_target,
+            "--events", events_path,
+        )
+
+        self.assert_failed(result, self.download_target)
+        self.assertIn("--os-file", result.stderr)
+        self.assertIn("--events", result.stderr)
+
+    def test_the_two_opensubtitles_modes_cannot_be_combined(self):
+        result = self.run_cli(
+            "--os-search", "The Thing",
+            "--os-file", "7061050",
+            "--output", self.download_target,
+        )
+
+        self.assert_failed(result, self.download_target)
+        self.assertIn("--os-file", result.stderr)
+
+    def test_a_search_filter_without_a_search_is_refused(self):
+        events_path = self.write_events(self.EVENT)
+        for flag, value in (("--os-year", "1982"), ("--os-season", "2"),
+                            ("--os-episode", "7")):
+            with self.subTest(flag=flag):
+                out = self.workdir / "warned-{}.srt".format(flag.strip("-"))
+                result = self.run_cli(
+                    "--subtitles", self.subtitles,
+                    "--events", events_path,
+                    "--output", out,
+                    flag, value,
+                )
+                self.assert_failed(result, out)
+                self.assertIn("--os-search", result.stderr)
+
+    def test_a_rejected_command_never_echoes_the_api_key(self):
+        """The value is what must not come back; the flag name is what helps."""
+        secret = "sk-live-do-not-echo-this"
+        result = self.run_cli(
+            "--os-search", "The Thing",
+            "--os-api-key", secret,
+            "--output", self.workdir / "warned.srt",
+        )
+
+        self.assert_failed(result)
+        self.assertNotIn(secret, result.stderr)
+        self.assertNotIn(secret, result.stdout)
+
+    def test_a_misspelled_key_flag_does_not_echo_its_value(self):
+        """A typo puts the key where argparse would normally quote it back."""
+        secret = "sk-live-do-not-echo-this"
+        result = self.run_cli(
+            "--os-search", "The Thing", "--os-api-ke={}".format(secret),
+        )
+
+        self.assert_failed(result)
+        self.assertNotIn(secret, result.stderr)
+        self.assertNotIn(secret, result.stdout)
+        self.assertIn("--os-api-ke", result.stderr)
+
+    def test_a_credential_failure_under_json_is_structured_and_clean(self):
+        secret = "sk-live-do-not-echo-this"
+        output = self.download_target
+        result = self.run_cli(
+            "--os-file", "7061050", "--output", output,
+            "--os-api-key", secret, "--json",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_no_traceback(result)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid-input", payload["error"]["code"])
+        self.assertIn("OPENSUBTITLES_USERNAME", payload["error"]["message"])
+        self.assertNotIn(secret, result.stdout)
+        self.assertFalse(output.exists())
+
+    def test_the_new_flags_did_not_narrow_the_generation_contract(self):
+        """The whole point is that an ordinary run is untouched."""
+        _, text = self.build(self.EVENT)
+
+        self.assertIn(WARNING_TEXT, text)
+
+    def test_list_streams_still_refuses_to_generate(self):
+        result = self.run_cli(
+            "--list-streams", "--video", self.subtitles,
+            "--os-search", "The Thing",
+        )
+
+        self.assert_failed(result)
+        self.assertIn("--list-streams", result.stderr)

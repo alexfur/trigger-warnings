@@ -34,6 +34,8 @@ EXIT_OK = 0
 EXIT_ERROR = 2
 
 _DEFAULT_LANGUAGE = "eng"
+# OpenSubtitles speaks ISO 639-1, so its default is not --language's.
+_DEFAULT_OS_LANGUAGE = "en"
 
 _REDACTED = "<redacted>"
 # An option name, and nothing else: a leading dash, a letter, then name
@@ -107,6 +109,28 @@ class _ArgumentParser(argparse.ArgumentParser):
                     "than echoed back.".format(name)
                 )
 
+    def _supplied_options(self, args):
+        """The option strings actually written on the command line.
+
+        argparse cannot tell a flag left at its default from one spelled out
+        with that same value, so ``--lead 20`` and no ``--lead`` at all were
+        indistinguishable and the first rode along silently into a mode that
+        ignores it. Scanning argv is the only place that distinction survives.
+
+        The scan stops at ``--`` because a token after the separator is a value.
+        """
+        known = set()
+        for action in self._actions:
+            known.update(action.option_strings)
+        supplied = set()
+        for item in args:
+            if item == "--":
+                break
+            name = item.partition("=")[0]
+            if name in known:
+                supplied.add(name)
+        return supplied
+
     def parse_args(self, args=None, namespace=None):
         """Reject unknown or over-supplied arguments by name only, never by value.
 
@@ -118,6 +142,7 @@ class _ArgumentParser(argparse.ArgumentParser):
             args = sys.argv[1:]
         self._reject_attached_values(args)
         namespace, extras = self.parse_known_args(args, namespace)
+        namespace.supplied_options = self._supplied_options(args)
         if extras:
             raise TriggerWarningsError(
                 "unrecognized arguments: {}. A value attached to one is "
@@ -199,6 +224,27 @@ def _year(text):
     return value
 
 
+def _os_file_id(text):
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a positive OpenSubtitles file id")
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive OpenSubtitles file id")
+    return value
+
+
+def _os_number(text):
+    """A season or episode number. Zero is allowed; specials use it."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a whole number")
+    if value < 0:
+        raise argparse.ArgumentTypeError("must not be negative, got {!r}".format(text))
+    return value
+
+
 def build_parser():
     parser = _ArgumentParser(
         prog="trigger-warnings",
@@ -241,6 +287,41 @@ def build_parser():
     parser.add_argument(
         "--ddd-year", type=_year, metavar="YEAR",
         help="release year to narrow --ddd-search",
+    )
+    parser.add_argument(
+        "--os-search", metavar="TITLE",
+        help="search OpenSubtitles for a dialogue track; choose a file id "
+             "before downloading",
+    )
+    parser.add_argument(
+        "--os-year", type=_year, metavar="YEAR",
+        help="release year to narrow --os-search",
+    )
+    parser.add_argument(
+        "--os-season", type=_os_number, metavar="N",
+        help="season number to narrow --os-search",
+    )
+    parser.add_argument(
+        "--os-episode", type=_os_number, metavar="N",
+        help="episode number to narrow --os-search",
+    )
+    parser.add_argument(
+        "--os-language", default=_DEFAULT_OS_LANGUAGE, metavar="CODE",
+        help="ISO 639-1 language for --os-search (default: {})".format(
+            _DEFAULT_OS_LANGUAGE
+        ),
+    )
+    parser.add_argument(
+        "--os-file", type=_os_file_id, metavar="FILE_ID",
+        help="download one OpenSubtitles file id from --os-search into "
+             "--output PATH.srt; signs in with OPENSUBTITLES_USERNAME and "
+             "OPENSUBTITLES_PASSWORD",
+    )
+    parser.add_argument(
+        "--os-api-key", metavar="KEY",
+        help="OpenSubtitles API key; alternatively set OPENSUBTITLES_API_KEY. "
+             "The username and password have no flag and are read from the "
+             "environment only",
     )
     parser.add_argument(
         "--output", type=Path, metavar="PATH",
@@ -306,6 +387,13 @@ def build_parser():
 # ----------------------------------------------------------------------- validation
 
 
+def _utc_timestamp():
+    """The current time as a whole-second UTC ISO 8601 string."""
+    return datetime.datetime.now(datetime.timezone.utc).replace(
+        microsecond=0
+    ).isoformat().replace("+00:00", "Z")
+
+
 def _resolve(path):
     """Absolute, symlink-resolved path, usable for aliasing comparisons."""
     return Path(os.path.realpath(str(path)))
@@ -326,11 +414,25 @@ def _check_publication_targets(targets, inputs):
 
     This is an early, readable rejection. The create itself still uses ``O_EXCL``,
     which is what actually makes the guarantee hold against a concurrent writer.
+    Symlinks are the exception that has to be caught here, because ``O_EXCL``
+    only refuses them on POSIX.
     """
     seen = {}
     for flag, path in targets:
         if path is None:
             continue
+        # lstat, not exists(): a link pointing at nothing is invisible to every
+        # check that follows it, so a naive existence test would write straight
+        # through it to a path the user never named. POSIX open(O_CREAT|O_EXCL)
+        # refuses a symlink whatever it points at, but Windows resolves the
+        # reparse point and creates the target, so this check -- not the create
+        # -- is what makes the refusal hold on every platform.
+        if path.is_symlink():
+            raise TriggerWarningsError(
+                "{} is a symbolic link: {}. Links are never followed, because "
+                "the file written would not be the one named; pass the real "
+                "path you want created.".format(flag, path)
+            )
         if path.exists():
             raise TriggerWarningsError(
                 "{} already exists: {}. Existing files are never replaced; choose a "
@@ -342,9 +444,8 @@ def _check_publication_targets(targets, inputs):
                 "{} and {} are the same path: {}".format(seen[resolved], flag, path)
             )
         seen[resolved] = flag
-        # Check the parent the user named, rather than a dangling symlink's
-        # eventual target. O_EXCL below remains the authoritative no-follow,
-        # no-overwrite check.
+        # Check the parent the user named. The path itself is known not to be a
+        # link by now, so this is the directory the file really lands in.
         parent = path.parent
         if not parent.is_dir():
             raise TriggerWarningsError(
@@ -618,9 +719,7 @@ def _source_metadata(args, source=None):
         "timestampedRatings": len(source.events),
         "communityRatings": source.community,
         "sceneAlerts": source.scene_alerts,
-        "queriedAt": datetime.datetime.now(datetime.timezone.utc).replace(
-            microsecond=0
-        ).isoformat().replace("+00:00", "Z"),
+        "queriedAt": _utc_timestamp(),
         "attribution": "Powered by DoesTheDogDie.com",
         "notes": list(source.notes),
     }
@@ -630,9 +729,7 @@ def _provenance_payload(args, source, kept, dropped, windows, dialogue, notes):
     """Return a human-auditable sidecar without secrets or source text."""
     data = {
         "schemaVersion": 1,
-        "generatedAt": datetime.datetime.now(datetime.timezone.utc).replace(
-            microsecond=0
-        ).isoformat().replace("+00:00", "Z"),
+        "generatedAt": _utc_timestamp(),
         "source": source,
         "output": str(args.output),
         "video": str(args.video) if args.video is not None else None,
@@ -655,6 +752,190 @@ def _provenance_payload(args, source, kept, dropped, windows, dialogue, notes):
     return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
+def _search_os_subtitles(args, report):
+    """List candidates. It never picks one, and it never sends the password."""
+    from . import opensubtitles
+
+    found = opensubtitles.search_subtitles(
+        opensubtitles.api_key_from_environment(args.os_api_key),
+        args.os_search,
+        year=args.os_year,
+        season=args.os_season,
+        episode=args.os_episode,
+        language=args.os_language,
+    )
+    report(opensubtitles.ATTRIBUTION)
+    for note in found.notes:
+        report(note)
+    if not args.json_output:
+        if found.candidates:
+            print("OpenSubtitles candidates:")
+            print("  {:<10} {:<5} {:<6} {:<7} {}".format(
+                "fileId", "lang", "year", "trusted", "release or file name"))
+            for candidate in found.candidates:
+                print("  {:<10} {:<5} {:<6} {:<7} {}".format(
+                    candidate["fileId"],
+                    candidate["language"] or "",
+                    candidate["year"] if candidate["year"] is not None else "",
+                    "yes" if candidate["fromTrusted"] else "",
+                    candidate["release"] or candidate["fileName"] or "",
+                ))
+            # Keep the table ahead of the stderr guidance when callers redirect
+            # both streams into one file.
+            sys.stdout.flush()
+            report(
+                "Pass one of these file ids as --os-file ID with --output PATH.srt. "
+                "Listing a subtitle does not confirm it matches your video edition."
+            )
+        else:
+            print("No OpenSubtitles candidates matched. This does not establish "
+                  "that the title has no subtitles.")
+    return found
+
+
+def _os_provenance_payload(args, source):
+    """An audit record of one download, with nothing secret in it.
+
+    Deliberately absent: the API key, the username, the password, the session
+    token, the temporary download link, and the dialogue itself. What is left is
+    what a reader needs to know where the file came from and what it cost.
+    """
+    stamp = _utc_timestamp()
+    data = {
+        "schemaVersion": 1,
+        "generatedAt": stamp,
+        "source": {
+            "kind": "opensubtitles",
+            "fileId": args.os_file,
+            "fileName": source.file_name,
+            "downloadedAt": stamp,
+            "attribution": _os_attribution(),
+            "downloadsUsedToday": source.used,
+            "downloadsRemainingToday": source.remaining,
+            "notes": list(source.notes),
+        },
+        "output": str(args.output),
+        "result": {"dialogueCues": source.cues},
+    }
+    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _os_attribution():
+    from . import opensubtitles
+
+    return opensubtitles.ATTRIBUTION
+
+
+def _download_os_subtitle(args, report, result):
+    """Spend one download and publish the file, or publish nothing at all."""
+    from . import opensubtitles
+
+    if args.output is None:
+        raise TriggerWarningsError(
+            "--os-file downloads a subtitle file, so it needs --output PATH.srt"
+        )
+    if args.output.suffix.lower() != ".srt":
+        raise TriggerWarningsError(
+            "--os-file writes the track exactly as OpenSubtitles supplied it, so "
+            "--output must end in .srt, got {!r}".format(args.output.name)
+        )
+    # Checked before signing in: a download costs quota from a small daily
+    # allowance, and spending one to then refuse to write the file wastes it.
+    _check_publication_targets(
+        [("--output", args.output), ("--provenance", args.provenance)], []
+    )
+
+    credentials = opensubtitles.credentials_from_environment(args.os_api_key)
+    source = opensubtitles.download_subtitle(credentials, args.os_file)
+    report(opensubtitles.ATTRIBUTION)
+    report("Downloaded OpenSubtitles file {}{}.".format(
+        args.os_file,
+        " ({})".format(source.file_name) if source.file_name else "",
+    ))
+    for note in source.notes:
+        report(note)
+
+    # The client parsed the body already, inside its own scrubbing guard, and
+    # hands back the count. Parsing it a second time here would put a rejected
+    # CDN error document -- which can quote the download token -- through an
+    # unguarded error path.
+    targets = [(args.output, source.text.encode("utf-8"))]
+    if args.provenance is not None:
+        targets.append((args.provenance, _os_provenance_payload(args, source)))
+
+    result.update({
+        "mode": "os-download",
+        "source": {
+            "kind": "opensubtitles",
+            "fileId": args.os_file,
+            "fileName": source.file_name,
+            "attribution": opensubtitles.ATTRIBUTION,
+            "downloadsRemainingToday": source.remaining,
+        },
+        "output": str(args.output),
+        "provenance": str(args.provenance) if args.provenance is not None else None,
+        "filesWritten": [],
+        "dialogueCues": source.cues,
+        "notes": list(source.notes),
+    })
+    result["filesWritten"] = [str(path) for path in publish(targets)]
+
+    report("Wrote {} ({} dialogue cue{}).".format(
+        args.output, source.cues, "" if source.cues == 1 else "s"))
+    if args.provenance is not None:
+        report("Wrote {}.".format(args.provenance))
+    report(
+        "This is the dialogue track only; no warnings were added. Run the tool "
+        "again with --subtitles {} to generate them.".format(args.output)
+    )
+    return EXIT_OK
+
+
+def _reject_os_flags(args, mode, allowed):
+    """Refuse any flag belonging to another mode, naming every one supplied."""
+    candidates = (
+        ("--subtitles", args.subtitles, None),
+        ("--events", args.events, None),
+        ("--output", args.output, None),
+        ("--video", args.video, None),
+        ("--stream", args.stream, None),
+        ("--verify", args.verify, None),
+        ("--provenance", args.provenance, None),
+        ("--ddd-item", args.ddd_item, None),
+        ("--ddd-search", args.ddd_search, None),
+        ("--ddd-year", args.ddd_year, None),
+        ("--ddd-api-key", args.ddd_api_key, None),
+        ("--os-search", args.os_search, None),
+        ("--os-file", args.os_file, None),
+        ("--os-year", args.os_year, None),
+        ("--os-season", args.os_season, None),
+        ("--os-episode", args.os_episode, None),
+        ("--os-language", args.os_language, _DEFAULT_OS_LANGUAGE),
+        ("--category", args.category, []),
+        ("--lead", args.lead, 20.0),
+        ("--tail", args.tail, 0.0),
+        ("--offset", args.offset, 0.0),
+        ("--dry-run", args.dry_run, False),
+        ("--list-streams", args.list_streams, False),
+        ("--language", args.language, _DEFAULT_LANGUAGE),
+    )
+    # Prefer the flags actually written over a value comparison: a flag set
+    # to its own default is still a flag the caller asked for, and answering
+    # "accepted" there tells them a lead or a language was applied when the
+    # mode ignores both. The value comparison remains for a hand-built
+    # Namespace, which carries no record of an argv.
+    written = getattr(args, "supplied_options", None)
+    supplied = [
+        flag for flag, value, default in candidates
+        if flag not in allowed
+        and (flag in written if written is not None else value != default)
+    ]
+    if supplied:
+        raise TriggerWarningsError("{}; run it without {}".format(
+            mode, ", ".join(supplied)
+        ))
+
+
 def _reject_search_generation_flags(args):
     supplied = []
     for flag, value, default in (
@@ -674,6 +955,13 @@ def _reject_search_generation_flags(args):
         # A search reads no subtitle stream, so a language here means the
         # caller expected a generation run and would get a title list instead.
         ("--language", args.language, _DEFAULT_LANGUAGE),
+        ("--os-search", args.os_search, None),
+        ("--os-file", args.os_file, None),
+        ("--os-api-key", args.os_api_key, None),
+        ("--os-year", args.os_year, None),
+        ("--os-season", args.os_season, None),
+        ("--os-episode", args.os_episode, None),
+        ("--os-language", args.os_language, _DEFAULT_OS_LANGUAGE),
     ):
         if value != default:
             supplied.append(flag)
@@ -698,7 +986,13 @@ def run(args, report, result=None):
                             ("--ddd-api-key", args.ddd_api_key),
                             ("--ddd-search", args.ddd_search),
                             ("--ddd-year", args.ddd_year),
-                            ("--provenance", args.provenance)):
+                            ("--provenance", args.provenance),
+                            ("--os-search", args.os_search),
+                            ("--os-file", args.os_file),
+                            ("--os-api-key", args.os_api_key),
+                            ("--os-year", args.os_year),
+                            ("--os-season", args.os_season),
+                            ("--os-episode", args.os_episode)):
             if value is not None:
                 raise TriggerWarningsError(
                     "--list-streams does not generate output; run it without "
@@ -713,6 +1007,44 @@ def run(args, report, result=None):
             "listStreams": list_streams(args, report),
         })
         return EXIT_OK
+
+    if args.os_search is not None:
+        _reject_os_flags(
+            args,
+            "--os-search only lists subtitle files to choose from",
+            allowed=("--os-search", "--os-year", "--os-season", "--os-episode",
+                     "--os-language"),
+        )
+        found = _search_os_subtitles(args, report)
+        result.update({
+            "mode": "os-search",
+            "source": {"kind": "opensubtitles", "attribution": _os_attribution()},
+            "filesWritten": [],
+            "candidates": found.candidates,
+            "notes": list(found.notes),
+        })
+        return EXIT_OK
+
+    if args.os_file is not None:
+        _reject_os_flags(
+            args,
+            "--os-file downloads one dialogue track and adds no warnings",
+            allowed=("--os-file", "--output", "--provenance"),
+        )
+        return _download_os_subtitle(args, report, result)
+
+    for flag, value in (("--os-year", args.os_year),
+                        ("--os-season", args.os_season),
+                        ("--os-episode", args.os_episode)):
+        if value is not None:
+            raise TriggerWarningsError("{} needs --os-search".format(flag))
+    if args.os_language != _DEFAULT_OS_LANGUAGE:
+        raise TriggerWarningsError(
+            "--os-language narrows --os-search; --language selects an embedded "
+            "stream for a generation run"
+        )
+    if args.os_api_key is not None:
+        raise TriggerWarningsError("--os-api-key needs --os-search or --os-file")
 
     if args.ddd_search is not None:
         _reject_search_generation_flags(args)

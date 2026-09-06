@@ -1,6 +1,6 @@
 ---
 name: trigger-warnings
-description: Add advance trigger warnings to local dialogue subtitles using supplied event timestamps or the opt-in official DoesTheDogDie API source. Use when preparing warning subtitles for VLC or checking warning placement and synchronisation. Does not infer scene timestamps.
+description: Add advance trigger warnings to local dialogue subtitles using supplied event timestamps or the opt-in official DoesTheDogDie API source, and fetch the dialogue track itself from OpenSubtitles with the user's own account. Use when preparing warning subtitles for VLC or checking warning placement and synchronisation. Does not infer scene timestamps.
 ---
 
 # Trigger warnings
@@ -23,11 +23,12 @@ that object; never scrape the prose report.
 - `ok` is `true` or `false`. On failure, read `error.message`, and treat
   `error.code` as an open set of failure classes rather than a fixed list.
   Branch on `ok`; never on a code you have hardcoded.
-- `mode` is `generate`, `dry-run`, `list-streams` or `ddd-search`.
+- `mode` is `generate`, `dry-run`, `list-streams`, `ddd-search`, `os-search` or `os-download`.
 - `filesWritten` lists every path the run created, in order. It stays empty
-  until publication has happened, so it is empty on `dry-run`, `list-streams`
-  and `ddd-search`. A failure carries no result fields at all and rolls back
-  anything already created, so there is nothing to name. Report it to the user.
+  until publication has happened, so it is empty on `dry-run`, `list-streams`,
+  `ddd-search` and `os-search`. `os-download` fills it like `generate` does. A
+  failure carries no result fields at all and rolls back anything already
+  created, so there is nothing to name. Report it to the user.
 - `output`, `preview` and `provenance` name the `--output`, `--verify` and
   `--provenance` paths that were asked for, or `null`. They appear on `generate`
   and `dry-run` whether or not the flag was passed, so never read them as
@@ -41,6 +42,10 @@ Argument errors come back in the same shape, so one parser covers every failure.
 
 Confirm the dialogue SRT, the event timestamps, the selected categories and the
 video edition. Use only timestamps the user supplies or authorises.
+
+A dialogue SRT can come from the user, from `--video` extraction, or from
+`--os-file` with the user's own OpenSubtitles account. Ask which they want rather
+than downloading on their behalf.
 
 Events are a JSON array of `{start, end, label, severity}`; `end` and `severity`
 are optional, and times are non-negative seconds or `HH:MM:SS.mmm`. An unknown
@@ -77,6 +82,51 @@ DoesTheDogDie.com` attribution in your report whenever this source is used. API
 timestamps are community-supplied, incomplete and unverified, and the result
 reports how many ratings had no timestamp. A response with no timestamped
 ratings is an error, not evidence that a title is free of triggers.
+
+### The OpenSubtitles source
+
+This fetches the *dialogue* track. It adds no warnings, and it is a separate mode
+from generation that refuses the generation flags.
+
+Credentials never go on the command line. The API key may come from
+`--os-api-key` or `OPENSUBTITLES_API_KEY`; prefer the variable. The username and
+password come from `OPENSUBTITLES_USERNAME` and `OPENSUBTITLES_PASSWORD` and have
+no flag at all, so never offer to pass them as arguments and never write them to
+a file. No credential file is read. If any is missing, the error names the
+variable; ask the user to export it rather than trying to supply it yourself.
+
+Search first, and let the user choose:
+
+```sh
+trigger-warnings --json --os-search 'Title' --os-year 1957
+```
+
+`--os-search` needs only the API key, sends no password and selects nothing.
+Present the `candidates` rows (`fileId`, `language`, `year`, `release`,
+`fromTrusted`, `hearingImpaired`) and ask which matches the user's copy. Respect
+their accessibility preference: do not silently drop the hearing-impaired
+entries. Narrow a series with `--os-season` and `--os-episode`, and set
+`--os-language` with an ISO 639-1 code. An empty list means nothing matched the
+query, not that the title has no subtitles.
+
+Then download the file id the user picked, to a new `.srt`:
+
+```sh
+trigger-warnings --json --os-file 7061050 --output dialogue.srt
+```
+
+A download spends one of a small daily allowance, so the tool asks once and never
+retries. Do not re-run a failed download to see whether it works the second time:
+read `error.message` first, because a spent quota and a wrong file id read very
+differently and only one of them is worth another attempt. `notes` reports how
+many downloads remain.
+
+What arrives is decoded as UTF-8 and parsed as SRT before anything is written, so
+a rate-limit page cannot reach the user's disk as dialogue. The result is
+dialogue only; pass its path to `--subtitles` to add warnings. Repeat the
+`Subtitles from OpenSubtitles.com` attribution in your report whenever this
+source is used, and say that the subtitles are contributor-uploaded, so timing
+may not match the user's edition.
 
 ## Plan, then generate
 
