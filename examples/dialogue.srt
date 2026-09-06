@@ -1,0 +1,11 @@
+1
+00:00:12,000 --> 00:00:17,000
+This is a harmless subtitle demonstration.
+
+2
+00:00:30,000 --> 00:00:33,000
+The warning and dialogue should both be visible.
+
+3
+00:00:51,000 --> 00:00:54,000
+An ended warning is not an all-clear.
