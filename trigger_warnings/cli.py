@@ -179,7 +179,10 @@ def _check_publication_targets(targets, inputs):
                 "{} and {} are the same path: {}".format(seen[resolved], flag, path)
             )
         seen[resolved] = flag
-        parent = resolved.parent
+        # Check the parent the user named, rather than a dangling symlink's
+        # eventual target. O_EXCL below remains the authoritative no-follow,
+        # no-overwrite check.
+        parent = path.parent
         if not parent.is_dir():
             raise TriggerWarningsError(
                 "{} is in a directory that does not exist: {}. Create it first; "
@@ -310,6 +313,9 @@ def list_streams(args, report):
         "index", "codec", "lang", "kind", "title / flags"))
     for stream in streams:
         print(_describe_stream(media, stream))
+    # Keep the table ahead of the stderr guidance when callers redirect both
+    # streams into one file.
+    sys.stdout.flush()
     report(
         "Pass one of these absolute indices as --stream INDEX. Selecting a stream "
         "does not confirm it matches your video edition."
@@ -481,7 +487,10 @@ def main(argv=None):
         print("error: interrupted", file=sys.stderr)
         return EXIT_ERROR
     except Exception as error:  # media failures and anything the OS refuses
-        if type(error).__name__ == "MediaError" or isinstance(error, OSError):
+        # media is deliberately lazy so subtitle-only use has no FFmpeg
+        # requirement. MediaError subclasses ValueError, which keeps this
+        # resilient to future media-specific subclasses without eager imports.
+        if isinstance(error, (ValueError, OSError)):
             print("error: {}".format(error), file=sys.stderr)
             return EXIT_ERROR
         raise
