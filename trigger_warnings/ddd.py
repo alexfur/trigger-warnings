@@ -8,6 +8,7 @@ the core renderer therefore remains independent of any remote source.
 import json
 from collections import namedtuple
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .core import Event, TriggerWarningsError
@@ -24,6 +25,7 @@ __all__ = [
     "DddApiError",
     "DddEvents",
     "load_item_events",
+    "search_items",
 ]
 
 
@@ -44,6 +46,20 @@ def _require_item_id(item_id):
     if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id <= 0:
         raise DddApiError("--ddd-item must be a positive API item id")
     return item_id
+
+
+def _require_search_text(text):
+    if not isinstance(text, str) or not text.strip():
+        raise DddApiError("--ddd-search must not be empty")
+    return text.strip()
+
+
+def _require_year(year):
+    if year is None:
+        return None
+    if isinstance(year, bool) or not isinstance(year, int) or not 1 <= year <= 9999:
+        raise DddApiError("--ddd-year must be a four-digit year")
+    return year
 
 
 def _request_json(path, api_key, opener=urlopen):
@@ -126,6 +142,40 @@ def _topic_names(data):
             raise DddApiError("DoesTheDogDie API returned a topic without a name")
         names[topic_id] = name.strip()
     return names
+
+
+def search_items(api_key, title, year=None, opener=urlopen):
+    """Search official items without choosing one on the user's behalf."""
+    key = _require_key(api_key)
+    name = _require_search_text(title)
+    release_year = _require_year(year)
+    query = {"name": name}
+    if release_year is not None:
+        query["releaseYear"] = str(release_year)
+    data = _request_json("/items?" + urlencode(query), key, opener)
+    if not isinstance(data, list):
+        raise DddApiError("DoesTheDogDie API returned invalid search results")
+
+    candidates = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise DddApiError("DoesTheDogDie API returned an invalid search result")
+        item_id = item.get("id")
+        item_name = item.get("name")
+        if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id <= 0:
+            raise DddApiError("DoesTheDogDie API returned a result without a valid id")
+        if not isinstance(item_name, str) or not item_name.strip():
+            raise DddApiError("DoesTheDogDie API returned a result without a name")
+        candidate = {
+            "id": item_id,
+            "name": item_name.strip(),
+            "releaseYear": item.get("releaseYear"),
+            "itemType": item.get("itemTypeName"),
+            "imdbId": item.get("imdbId"),
+            "tmdbId": item.get("tmdbId"),
+        }
+        candidates.append(candidate)
+    return candidates
 
 
 def load_item_events(api_key, item_id, opener=urlopen):

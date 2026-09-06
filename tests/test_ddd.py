@@ -4,6 +4,9 @@ Every HTTP response is synthetic. These tests never contact the public API and
 never use an actual API key.
 """
 
+import contextlib
+import io
+import json
 import os
 import tempfile
 import unittest
@@ -109,6 +112,32 @@ class DddApiTests(unittest.TestCase):
         with self.assertRaisesRegex(ddd.DddApiError, "not evidence"):
             ddd.load_item_events("test-key", 42, opener=opener)
 
+    def test_search_returns_candidates_without_selecting_one(self):
+        requests = []
+
+        def opener(request, timeout):
+            requests.append((request, timeout))
+            return _Response(
+                '[{"id": 42, "name": "The Thing", "releaseYear": 1982, '
+                '"itemTypeName": "Movie", "imdbId": "tt0084787", '
+                '"tmdbId": 1091}]'
+            )
+
+        candidates = ddd.search_items("test-key", "The Thing", 1982, opener=opener)
+
+        self.assertEqual([{
+            "id": 42,
+            "name": "The Thing",
+            "releaseYear": 1982,
+            "itemType": "Movie",
+            "imdbId": "tt0084787",
+            "tmdbId": 1091,
+        }], candidates)
+        self.assertEqual(
+            ddd.API_BASE_URL + "/items?name=The+Thing&releaseYear=1982",
+            requests[0][0].full_url,
+        )
+
 
 class DddCliTests(unittest.TestCase):
     def setUp(self):
@@ -160,6 +189,74 @@ class DddCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ddd.DddApiError, "API key"):
                 cli.run(self._args(), reports.append)
         self.assertFalse((self.workdir / "warned.ass").exists())
+
+
+class CliUnexpectedFailureTests(unittest.TestCase):
+    """What a broken tool owes a caller that cannot read a traceback.
+
+    The API client is the fault injection point here only because it is the
+    layer most able to raise something nobody anticipated: a TLS, socket or
+    third-party failure that is neither a ValueError nor an OSError. The
+    contract under test belongs to the CLI.
+    """
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.workdir = Path(self.tempdir.name)
+        self.subtitles = self.workdir / "dialogue.srt"
+        self.subtitles.write_text(
+            "1\n00:00:00,000 --> 00:00:05,000\nHarmless dialogue.\n",
+            encoding="utf-8",
+        )
+        self.output = self.workdir / "warned.ass"
+
+    def _argv(self, *extra):
+        return [
+            "--subtitles", str(self.subtitles), "--ddd-item", "42",
+            "--ddd-api-key", "test-key", "--output", str(self.output), *extra,
+        ]
+
+    def _broken_client(self, message):
+        return mock.patch(
+            "trigger_warnings.ddd.load_item_events", side_effect=RuntimeError(message)
+        )
+
+    def _main(self, *extra):
+        """Run main with both streams captured; return (status, stdout, stderr)."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = cli.main(self._argv(*extra))
+        return status, out.getvalue(), err.getvalue()
+
+    def test_unexpected_failure_under_json_is_a_structured_internal_error(self):
+        """A traceback on stderr with nothing on stdout is not an answer: a
+        caller parsing stdout reads it as "did not run", not "failed"."""
+        with self._broken_client("X-API-KEY: test-key was rejected"):
+            status, stdout, stderr = self._main("--json")
+
+        self.assertEqual(cli.EXIT_ERROR, status)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("internal-error", payload["error"]["code"])
+        self.assertIn("RuntimeError", payload["error"]["message"])
+        self.assertEqual("", stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_the_exception_text_is_not_repeated_to_the_caller(self):
+        """An unexpected exception carries whatever the failing library put in
+        it, which can be a request, a header or a credential."""
+        with self._broken_client("X-API-KEY: test-key was rejected"):
+            _, stdout, _ = self._main("--json")
+        self.assertNotIn("test-key", stdout)
+        self.assertNotIn("X-API-KEY", stdout)
+
+    def test_without_json_the_traceback_is_still_raised(self):
+        """Normal use keeps the traceback; it is the only debugging signal."""
+        with self._broken_client("boom"):
+            with self.assertRaises(RuntimeError):
+                self._main()
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":  # pragma: no cover

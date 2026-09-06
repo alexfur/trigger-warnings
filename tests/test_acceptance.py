@@ -924,6 +924,294 @@ class TestCliContract(CliTestCase):
         self.assertEqual(first, second, "identical inputs must give identical output")
 
 
+class TestAgenticContract(CliTestCase):
+    """Agent-facing plans, errors and provenance are machine-readable."""
+
+    EVENT = [{"start": 60, "end": 64, "label": "gore"}]
+
+    def test_json_dry_run_returns_one_plan_and_writes_nothing(self):
+        events = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--json", "--dry-run", "--subtitles", self.subtitles,
+            "--events", events,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("dry-run", payload["mode"])
+        self.assertEqual("local-events", payload["source"]["kind"])
+        self.assertEqual(1, payload["selectedEvents"])
+        self.assertEqual(1, payload["warningWindows"])
+        self.assertIsNone(payload["output"])
+        self.assertEqual([], list(self.workdir.glob("*.ass")))
+
+    def test_json_error_is_structured_and_does_not_write_output(self):
+        output = self.workdir / "warned.ass"
+        result = self.run_cli("--json", "--subtitles", self.subtitles, "--output", output)
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("", result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid-input", payload["error"]["code"])
+        self.assertIn("supply --events", payload["error"]["message"])
+        self.assertFalse(output.exists())
+
+    def test_provenance_sidecar_is_published_with_output(self):
+        events = self.write_events(self.EVENT)
+        output = self.workdir / "warned.ass"
+        provenance = self.workdir / "warned.provenance.json"
+        result = self.run_cli(
+            "--subtitles", self.subtitles, "--events", events,
+            "--output", output, "--provenance", provenance,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        manifest = json.loads(provenance.read_text(encoding="utf-8"))
+        self.assertEqual(1, manifest["schemaVersion"])
+        self.assertEqual("local-events", manifest["source"]["kind"])
+        self.assertEqual(1, manifest["categories"]["selectedEvents"])
+        self.assertEqual(1, manifest["result"]["warningWindows"])
+        self.assertNotIn("api", provenance.read_text(encoding="utf-8").lower())
+
+    def test_dry_run_refuses_preview_or_provenance_writes(self):
+        events = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--dry-run", "--subtitles", self.subtitles, "--events", events,
+            "--verify", self.workdir / "preview.png",
+        )
+        self.assert_failed(result)
+        self.assertIn("--dry-run cannot render --verify", result.stderr)
+
+
+class TestAgenticHardening(CliTestCase):
+    """A caller that cannot read a screen must not be guessed at or leaked from.
+
+    Each test here pins one way the machine-readable surface used to be worse
+    than the human one: a mistyped flag silently redirected, a secret echoed
+    back in an error, a plan that approved a write the write would refuse.
+    """
+
+    EVENT = [{"start": 60, "end": 64, "label": "gore"}]
+    # Shaped like a key so a leak is unmistakable, and belonging to nobody.
+    SECRET = "ddd-key-0000-not-a-real-credential"
+    # Every flag taking no value, and so every flag argparse would answer with
+    # "ignored explicit argument '<value>'" if it were given one.
+    VALUELESS_FLAGS = ("--json", "--dry-run", "--list-streams", "--help", "--version")
+
+    def generation_argv(self, events, output):
+        return ["--subtitles", self.subtitles, "--events", events,
+                "--output", output]
+
+    def test_flag_abbreviations_are_rejected(self):
+        """argparse accepts any unambiguous prefix by default, so `--outp` set
+        --output. Ambiguity is one added flag away, and it would silently
+        redirect a command rather than fail it."""
+        events = self.write_events(self.EVENT)
+        for full, abbreviated in (
+            ("--subtitles", "--subtitle"),
+            ("--events", "--event"),
+            ("--output", "--outp"),
+        ):
+            with self.subTest(flag=abbreviated):
+                out_path = self.workdir / "abbreviated.srt"
+                argv = self.generation_argv(events, out_path)
+                argv[argv.index(full)] = abbreviated
+                self.assert_failed(self.run_cli(*argv), out_path)
+
+    def test_an_unknown_flag_is_named_but_its_value_is_not(self):
+        """A mistyped --ddd-api-key must not put the key into the error text.
+
+        Under --json that text is a field an agent may log or echo back, and
+        argparse's own message joins the leftover argv verbatim.
+        """
+        result = self.run_cli("--json", "--ddd-api-ke=" + self.SECRET)
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("", result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("--ddd-api-ke", payload["error"]["message"])
+        self.assertNotIn(self.SECRET, result.stdout)
+
+    def test_a_separated_unknown_value_is_redacted_too(self):
+        """`--flag value` leaves two leftovers; the second one is the secret."""
+        result = self.run_cli(
+            "--ddd-api-keyy", self.SECRET, "--subtitles", self.subtitles
+        )
+        self.assert_failed(result)
+        self.assertIn("--ddd-api-keyy", result.stderr)
+        self.assertNotIn(self.SECRET, result.stdout + result.stderr)
+
+    def test_a_value_attached_to_a_valueless_flag_is_not_echoed(self):
+        """`--dry-run=KEY` must name the flag and drop the value.
+
+        A caller assembling a command by hand puts the key on the wrong flag
+        sooner or later, and argparse answers that with `ignored explicit
+        argument` followed by whatever was attached. Both output modes are
+        checked: the JSON one is the text an agent stores and quotes back, and
+        the prose one is what lands in a shell history or a CI log.
+        """
+        for flag in self.VALUELESS_FLAGS:
+            for json_mode in (False, True):
+                with self.subTest(flag=flag, json=json_mode):
+                    argv = ["--json"] if json_mode else []
+                    argv.append(flag + "=" + self.SECRET)
+                    result = self.run_cli(*argv)
+                    self.assert_failed(result)
+                    self.assertNotIn(
+                        self.SECRET,
+                        result.stdout + result.stderr,
+                        "the attached value came back in the error",
+                    )
+                    # `--json=KEY` is itself a request for JSON, so it lands
+                    # on stdout however the loop reached it.
+                    if json_mode or flag == "--json":
+                        self.assertEqual("", result.stderr)
+                        payload = json.loads(result.stdout)
+                        self.assertFalse(payload["ok"])
+                        self.assertIn(flag, payload["error"]["message"])
+                    else:
+                        self.assertIn(flag, result.stderr)
+
+    def test_an_attached_value_still_works_where_the_flag_takes_one(self):
+        """The valueless-flag check must not swallow `--lead=5` or
+        `--category=gore`, which are ordinary and correct spellings."""
+        events = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--json", "--dry-run", "--lead=5", "--category=gore",
+            *self.generation_argv(events, self.workdir / "planned.srt")
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(1, payload["selectedEvents"])
+
+    def test_json_equals_spelling_still_answers_in_json(self):
+        """`--json=true` is an argument error, but the format choice has to be
+        made before argparse says so, or the answer lands on the wrong stream."""
+        result = self.run_cli("--json=true", "--subtitles", self.subtitles)
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("", result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid-input", payload["error"]["code"])
+
+    def test_help_and_version_are_the_documented_json_exception(self):
+        """`--json` wraps every run except these two, which print their own
+        text and exit 0 whatever else is on the command line.
+
+        README.md and SKILL.md tell agents to call `--help` on its own because
+        of it, so the instruction rests on this behaviour staying put.
+        """
+        for flag in ("--help", "--version"):
+            with self.subTest(flag=flag):
+                result = self.run_cli("--json", flag)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual("", result.stderr)
+                self.assertTrue(result.stdout.strip(), "nothing was printed")
+                self.assertNotIn(
+                    '"ok"', result.stdout, "this is prose, not a result object"
+                )
+        self.assertIn("usage:", self.run_cli("--json", "--help").stdout)
+
+    def test_json_run_reports_progress_once(self):
+        """Messages belong inside the object, not on stderr as well."""
+        events = self.write_events(self.EVENT)
+        output = self.workdir / "warned.srt"
+        result = self.run_cli(
+            "--json", *self.generation_argv(events, output)
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            "", result.stderr,
+            "progress was repeated outside the JSON object",
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["messages"], "the run reported nothing at all")
+
+    def test_json_result_names_every_file_it_wrote(self):
+        events = self.write_events(self.EVENT)
+        output = self.workdir / "warned.srt"
+        provenance = self.workdir / "warned.provenance.json"
+        result = self.run_cli(
+            "--json", "--provenance", provenance,
+            *self.generation_argv(events, output)
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(str(output), payload["output"])
+        self.assertEqual(str(provenance), payload["provenance"])
+        self.assertIsNone(payload["preview"], "no preview was requested")
+        self.assertEqual([str(output), str(provenance)], payload["filesWritten"])
+        for named in payload["filesWritten"]:
+            self.assertTrue(
+                Path(named).is_file(), "{} was named but not written".format(named)
+            )
+
+    def test_a_dry_run_names_no_written_files(self):
+        events = self.write_events(self.EVENT)
+        planned = self.workdir / "planned.srt"
+        result = self.run_cli(
+            "--json", "--dry-run", *self.generation_argv(events, planned)
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("dry-run", payload["mode"])
+        self.assertEqual(str(planned), payload["output"])
+        self.assertEqual([], payload["filesWritten"])
+        self.assertFalse(planned.exists())
+
+    def test_dry_run_refuses_an_output_path_that_already_exists(self):
+        """The command whose whole job is "would this work?" must not answer
+        yes to a path the write would refuse a second later."""
+        events = self.write_events(self.EVENT)
+        existing = self.write("warned.srt", "PRECIOUS")
+        result = self.run_cli(
+            "--dry-run", *self.generation_argv(events, existing)
+        )
+        self.assert_failed(result)
+        self.assertIn("already exists", result.stderr)
+        self.assertEqual("PRECIOUS", existing.read_text(encoding="utf-8"))
+
+    def test_dry_run_refuses_an_output_in_a_missing_directory(self):
+        events = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--dry-run",
+            *self.generation_argv(events, self.workdir / "absent" / "warned.srt")
+        )
+        self.assert_failed(result)
+        self.assertIn("does not exist", result.stderr)
+
+    def test_search_rejects_a_subtitle_language(self):
+        """A search reads no subtitle stream, so --language means the caller
+        expected a generation run and would get a title list instead."""
+        result = self.run_cli(
+            "--json", "--ddd-search", "The Thing", "--language", "fre"
+        )
+        self.assertEqual(2, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("--language", payload["error"]["message"])
+
+    def test_a_stray_api_key_names_both_requests_that_use_it(self):
+        """`--ddd-api-key` serves `--ddd-item` and `--ddd-search` alike, so a
+        diagnostic naming only one sends a searching caller to the wrong flag."""
+        events = self.write_events(self.EVENT)
+        result = self.run_cli(
+            "--json", "--ddd-api-key", self.SECRET,
+            *self.generation_argv(events, self.workdir / "warned.srt")
+        )
+        self.assertEqual(2, result.returncode)
+        payload = json.loads(result.stdout)
+        message = payload["error"]["message"]
+        self.assertIn("--ddd-item", message)
+        self.assertIn("--ddd-search", message)
+        self.assertNotIn(
+            self.SECRET,
+            result.stdout + result.stderr,
+            "a correctly placed key must not be echoed either",
+        )
+
+
 class TestUnicodeAndEncoding(CliTestCase):
     """Real subtitle files are not ASCII and not always plain LF."""
 

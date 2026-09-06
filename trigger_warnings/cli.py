@@ -19,8 +19,11 @@ subtitle-only run works with no FFmpeg installed.
 """
 
 import argparse
+import datetime
 import errno
+import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +32,13 @@ from .core import TriggerWarningsError
 
 EXIT_OK = 0
 EXIT_ERROR = 2
+
+_DEFAULT_LANGUAGE = "eng"
+
+_REDACTED = "<redacted>"
+# An option name, and nothing else: a leading dash, a letter, then name
+# characters. Anything failing this is treated as a value.
+_OPTION_NAME_RE = re.compile(r"^--?[A-Za-z][A-Za-z0-9_-]*$")
 
 _SYNC_CAVEAT = (
     "Timing has not been checked against this video. Play the file and check a "
@@ -40,6 +50,103 @@ _RENDER_CAVEAT = (
     "does not prove the timestamps describe this video, and another player may "
     "position the text differently."
 )
+
+
+def _redact_argument(text):
+    """Name an unrecognised argument without echoing any value it carried.
+
+    argparse's own message joins the leftover argv verbatim, so a mistyped
+    ``--ddd-api-key`` would put the key itself in the error text. Under
+    ``--json`` that text is a machine-readable field an agent may log or print
+    back. The option name is what the caller needs to fix the command; the
+    value never is.
+
+    A dash-led token is taken to be a name and anything else a value, because a
+    caller writes a value where an option was expected far more often than the
+    reverse.
+    """
+    name = text.partition("=")[0]
+    if not _OPTION_NAME_RE.match(name):
+        return _REDACTED
+    return name if name == text else name + "=" + _REDACTED
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    """Raise a normal tool error so ``--json`` can report argument failures."""
+
+    def error(self, message):
+        raise TriggerWarningsError(message)
+
+    def _valueless_option_strings(self):
+        """Every spelling of every flag that takes no value, ``-h`` included."""
+        return {option
+                for action in self._actions if action.nargs == 0
+                for option in action.option_strings}
+
+    def _reject_attached_values(self, args):
+        """Reject ``--flag=value`` where the flag takes no value.
+
+        argparse answers this with ``ignored explicit argument 'value'``, which
+        hands the value straight back, so a caller who put an API key on the
+        wrong flag reads it in the error. That message is built deep inside
+        ``_parse_known_args``, before :meth:`error` ever sees it, so the only
+        place to stop it is ahead of the parse.
+
+        The scan stops at ``--`` because a token after the separator is a
+        value, not a flag.
+        """
+        valueless = self._valueless_option_strings()
+        for item in args:
+            if item == "--":
+                return
+            name, separator, _value = item.partition("=")
+            if separator and name in valueless:
+                raise TriggerWarningsError(
+                    "argument {}: this flag takes no value. Drop the '=' and "
+                    "everything after it. The value is redacted here rather "
+                    "than echoed back.".format(name)
+                )
+
+    def parse_args(self, args=None, namespace=None):
+        """Reject unknown or over-supplied arguments by name only, never by value.
+
+        The base implementation formats the offending argv into the message
+        itself, so both checks have to be intercepted here rather than in
+        :meth:`error`, where the value has already been interpolated.
+        """
+        if args is None:
+            args = sys.argv[1:]
+        self._reject_attached_values(args)
+        namespace, extras = self.parse_known_args(args, namespace)
+        if extras:
+            raise TriggerWarningsError(
+                "unrecognized arguments: {}. A value attached to one is "
+                "redacted, so check the spelling against --help.".format(
+                    " ".join(_redact_argument(item) for item in extras)
+                )
+            )
+        return namespace
+
+
+def _json_requested(arguments):
+    """Answer, before parsing, whether this run must speak JSON.
+
+    Both spellings count. ``--json=x`` is an argument error rather than a way to
+    switch the flag off, but argparse reaches that verdict well after this
+    answer is needed, and the error itself has to be reported somewhere. The
+    scan stops at ``--`` so an argument after the separator, which is a value
+    and not a flag, cannot change the output format.
+
+    This is not cosmetic. The answer decides where progress messages go, so a
+    pre-parse answer that disagrees with the parsed flag prints every message on
+    stderr *and* repeats it inside the JSON object on stdout.
+    """
+    for item in arguments:
+        if item == "--":
+            break
+        if item == "--json" or item.startswith("--json="):
+            return True
+    return False
 
 
 # ------------------------------------------------------------------- argument types
@@ -82,9 +189,23 @@ def _ddd_item_id(text):
     return value
 
 
+def _year(text):
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a four-digit year")
+    if not 1 <= value <= 9999:
+        raise argparse.ArgumentTypeError("must be a four-digit year")
+    return value
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(
+    parser = _ArgumentParser(
         prog="trigger-warnings",
+        # No abbreviations. `--ddd` is ambiguous today and every prefix is one
+        # new flag away from changing meaning, which would silently redirect an
+        # agent's command rather than fail it.
+        allow_abbrev=False,
         description=(
             "Add advance warnings to a dialogue subtitle track using local event "
             "timestamps or an explicit official DoesTheDogDie API request. This "
@@ -114,6 +235,14 @@ def build_parser():
         help="official DoesTheDogDie API key; alternatively set DDD_API_KEY",
     )
     parser.add_argument(
+        "--ddd-search", metavar="TITLE",
+        help="search official DoesTheDogDie API titles; choose an ID before generating",
+    )
+    parser.add_argument(
+        "--ddd-year", type=_year, metavar="YEAR",
+        help="release year to narrow --ddd-search",
+    )
+    parser.add_argument(
         "--output", type=Path, metavar="PATH",
         help="new .ass or .srt file to create; required for generation",
     )
@@ -140,8 +269,10 @@ def build_parser():
         help="video for subtitle extraction, duration checks and preview rendering",
     )
     parser.add_argument(
-        "--language", default="eng", metavar="CODE",
-        help="language for automatic subtitle stream selection (default: eng)",
+        "--language", default=_DEFAULT_LANGUAGE, metavar="CODE",
+        help="language for automatic subtitle stream selection (default: {})".format(
+            _DEFAULT_LANGUAGE
+        ),
     )
     parser.add_argument(
         "--stream", type=_stream_index, metavar="INDEX",
@@ -154,6 +285,20 @@ def build_parser():
     parser.add_argument(
         "--verify", type=Path, metavar="PATH",
         help="render a new PNG inside a warning window; requires --video",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="validate inputs and show the generation plan without writing files",
+    )
+    parser.add_argument(
+        "--provenance", type=Path, metavar="PATH",
+        help="new JSON sidecar recording source and generation details",
+    )
+    parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="write one machine-readable result or error object to standard "
+             "output; --help and --version are the exception and always print "
+             "plain text, so run them on their own",
     )
     return parser
 
@@ -325,20 +470,31 @@ def list_streams(args, report):
             "{} has no subtitle streams. Supply a dialogue track with "
             "--subtitles.".format(args.video)
         )
-    print("Subtitle streams in {} ({:.3f}s):".format(
-        args.video, media.duration_ms(info) / 1000.0))
-    print("  {:<6} {:<12} {:<6} {:<10} {}".format(
-        "index", "codec", "lang", "kind", "title / flags"))
+    duration_ms = media.duration_ms(info)
+    records = []
     for stream in streams:
-        print(_describe_stream(media, stream))
-    # Keep the table ahead of the stderr guidance when callers redirect both
-    # streams into one file.
-    sys.stdout.flush()
-    report(
-        "Pass one of these absolute indices as --stream INDEX. Selecting a stream "
-        "does not confirm it matches your video edition."
-    )
-    return EXIT_OK
+        tags = stream.get("tags") or {}
+        records.append({
+            "index": stream.get("index"),
+            "codec": stream.get("codec_name"),
+            "language": tags.get("language"),
+            "title": tags.get("title"),
+            "text": _is_text_stream(media, stream),
+        })
+    if not args.json_output:
+        print("Subtitle streams in {} ({:.3f}s):".format(args.video, duration_ms / 1000.0))
+        print("  {:<6} {:<12} {:<6} {:<10} {}".format(
+            "index", "codec", "lang", "kind", "title / flags"))
+        for stream in streams:
+            print(_describe_stream(media, stream))
+        # Keep the table ahead of the stderr guidance when callers redirect both
+        # streams into one file.
+        sys.stdout.flush()
+        report(
+            "Pass one of these absolute indices as --stream INDEX. Selecting a stream "
+            "does not confirm it matches your video edition."
+        )
+    return {"video": str(args.video), "durationMs": duration_ms, "streams": records}
 
 
 def _obtain_subtitles(args, report):
@@ -400,12 +556,15 @@ def _report_categories(kept, dropped, report):
         report("Excluded categories: none.")
 
 
+def _ddd_api_key(args):
+    return args.ddd_api_key or os.environ.get("DDD_API_KEY")
+
+
 def _load_ddd_events(args, report):
     """Fetch one user's official API data without persisting a copy of it."""
     from . import ddd
 
-    api_key = args.ddd_api_key or os.environ.get("DDD_API_KEY")
-    source = ddd.load_item_events(api_key, args.ddd_item)
+    source = ddd.load_item_events(_ddd_api_key(args), args.ddd_item)
     report(ddd.ATTRIBUTION)
     report(
         "Fetched {} timestamped DoesTheDogDie rating{} for item {} ({} community, "
@@ -420,45 +579,180 @@ def _load_ddd_events(args, report):
     )
     for note in source.notes:
         report(note)
-    return source.events
+    return source
+
+
+def _search_ddd_items(args, report):
+    from . import ddd
+
+    candidates = ddd.search_items(
+        _ddd_api_key(args), args.ddd_search, args.ddd_year
+    )
+    report(ddd.ATTRIBUTION)
+    if not args.json_output:
+        if candidates:
+            print("DoesTheDogDie candidates:")
+            print("  {:<8} {:<6} {:<12} {}".format("id", "year", "type", "title"))
+            for candidate in candidates:
+                print("  {:<8} {:<6} {:<12} {}".format(
+                    candidate["id"],
+                    candidate["releaseYear"] if candidate["releaseYear"] is not None else "",
+                    candidate["itemType"] or "",
+                    candidate["name"],
+                ))
+        else:
+            print("No DoesTheDogDie candidates matched. This does not establish that "
+                  "the title is absent from the service.")
+    return candidates
 
 
 # ------------------------------------------------------------------------- the run
 
 
-def run(args, report):
+def _source_metadata(args, source=None):
+    if source is None:
+        return {"kind": "local-events", "eventsPath": str(args.events)}
+    return {
+        "kind": "does-the-dog-die",
+        "itemId": args.ddd_item,
+        "timestampedRatings": len(source.events),
+        "communityRatings": source.community,
+        "sceneAlerts": source.scene_alerts,
+        "queriedAt": datetime.datetime.now(datetime.timezone.utc).replace(
+            microsecond=0
+        ).isoformat().replace("+00:00", "Z"),
+        "attribution": "Powered by DoesTheDogDie.com",
+        "notes": list(source.notes),
+    }
+
+
+def _provenance_payload(args, source, kept, dropped, windows, dialogue, notes):
+    """Return a human-auditable sidecar without secrets or source text."""
+    data = {
+        "schemaVersion": 1,
+        "generatedAt": datetime.datetime.now(datetime.timezone.utc).replace(
+            microsecond=0
+        ).isoformat().replace("+00:00", "Z"),
+        "source": source,
+        "output": str(args.output),
+        "video": str(args.video) if args.video is not None else None,
+        "categories": {
+            "requested": list(args.category),
+            "selectedEvents": len(kept),
+            "excludedEvents": len(dropped),
+        },
+        "timing": {
+            "leadSeconds": args.lead,
+            "tailSeconds": args.tail,
+            "offsetSeconds": args.offset,
+        },
+        "result": {
+            "dialogueCues": len(dialogue),
+            "warningWindows": len(windows),
+            "notes": list(notes),
+        },
+    }
+    return (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _reject_search_generation_flags(args):
+    supplied = []
+    for flag, value, default in (
+        ("--subtitles", args.subtitles, None),
+        ("--events", args.events, None),
+        ("--ddd-item", args.ddd_item, None),
+        ("--output", args.output, None),
+        ("--video", args.video, None),
+        ("--stream", args.stream, None),
+        ("--verify", args.verify, None),
+        ("--provenance", args.provenance, None),
+        ("--category", args.category, []),
+        ("--lead", args.lead, 20.0),
+        ("--tail", args.tail, 0.0),
+        ("--offset", args.offset, 0.0),
+        ("--dry-run", args.dry_run, False),
+        # A search reads no subtitle stream, so a language here means the
+        # caller expected a generation run and would get a title list instead.
+        ("--language", args.language, _DEFAULT_LANGUAGE),
+    ):
+        if value != default:
+            supplied.append(flag)
+    if supplied:
+        raise TriggerWarningsError(
+            "--ddd-search only searches for an item ID; run it without {}".format(
+                ", ".join(supplied)
+            )
+        )
+
+
+def run(args, report, result=None):
+    """Run one command and optionally fill a machine-readable result mapping."""
+    if result is None:
+        result = {}
+
     if args.list_streams:
         if args.video is None:
             raise TriggerWarningsError("--list-streams needs --video")
         for flag, value in (("--output", args.output), ("--verify", args.verify),
                             ("--events", args.events), ("--ddd-item", args.ddd_item),
-                            ("--ddd-api-key", args.ddd_api_key)):
+                            ("--ddd-api-key", args.ddd_api_key),
+                            ("--ddd-search", args.ddd_search),
+                            ("--ddd-year", args.ddd_year),
+                            ("--provenance", args.provenance)):
             if value is not None:
                 raise TriggerWarningsError(
                     "--list-streams does not generate output; run it without "
                     "{}".format(flag)
                 )
+        if args.dry_run:
+            raise TriggerWarningsError("--list-streams and --dry-run cannot be combined")
         _check_inputs_exist([("--video", args.video)])
-        return list_streams(args, report)
+        result.update({
+            "mode": "list-streams",
+            "filesWritten": [],
+            "listStreams": list_streams(args, report),
+        })
+        return EXIT_OK
 
-    if args.output is None:
+    if args.ddd_search is not None:
+        _reject_search_generation_flags(args)
+        result.update({
+            "mode": "ddd-search",
+            "source": {"kind": "does-the-dog-die", "attribution": "Powered by DoesTheDogDie.com"},
+            "filesWritten": [],
+            "candidates": _search_ddd_items(args, report),
+        })
+        return EXIT_OK
+
+    if args.ddd_year is not None:
+        raise TriggerWarningsError("--ddd-year needs --ddd-search")
+
+    if args.output is None and not args.dry_run:
         raise TriggerWarningsError("--output is required")
     if args.events is None and args.ddd_item is None:
         raise TriggerWarningsError("supply --events, or --ddd-item with an API key")
     if args.events is not None and args.ddd_item is not None:
         raise TriggerWarningsError("--events and --ddd-item are mutually exclusive")
     if args.ddd_item is None and args.ddd_api_key is not None:
-        raise TriggerWarningsError("--ddd-api-key needs --ddd-item")
+        raise TriggerWarningsError(
+            "--ddd-api-key needs --ddd-item or --ddd-search"
+        )
+    if args.dry_run and args.verify is not None:
+        raise TriggerWarningsError("--dry-run cannot render --verify; it writes no files")
+    if args.dry_run and args.provenance is not None:
+        raise TriggerWarningsError("--dry-run cannot write --provenance")
     if args.verify is not None and args.video is None:
         raise TriggerWarningsError(
             "--verify renders a frame from a video, so it needs --video"
         )
 
-    suffix = args.output.suffix.lower()
-    if suffix not in (".ass", ".srt"):
-        raise TriggerWarningsError(
-            "--output must end in .ass or .srt, got {!r}".format(args.output.name)
-        )
+    suffix = None
+    if args.output is not None:
+        suffix = args.output.suffix.lower()
+        if suffix not in (".ass", ".srt"):
+            raise TriggerWarningsError(
+                "--output must end in .ass or .srt, got {!r}".format(args.output.name)
+            )
     if args.verify is not None and args.verify.suffix.lower() != ".png":
         raise TriggerWarningsError(
             "--verify writes a PNG, so its path must end in .png, got {!r}".format(
@@ -469,12 +763,19 @@ def run(args, report):
     inputs = [("--subtitles", args.subtitles), ("--events", args.events),
               ("--video", args.video)]
     _check_inputs_exist(inputs)
+    # A dry run checks the targets too. Skipping them made the one command whose
+    # job is to answer "would this work?" the one command that could answer yes
+    # and then fail on the very next invocation, at the write.
     _check_publication_targets(
-        [("--output", args.output), ("--verify", args.verify)], inputs
+        [("--output", args.output), ("--verify", args.verify),
+         ("--provenance", args.provenance)],
+        inputs,
     )
 
+    ddd_source = None
     if args.ddd_item is not None:
-        events = _load_ddd_events(args, report)
+        ddd_source = _load_ddd_events(args, report)
+        events = ddd_source.events
     else:
         events = core.load_events(
             _read_text(args.events, "--events"), str(args.events)
@@ -493,8 +794,24 @@ def run(args, report):
         duration_ms=duration_ms,
     )
     cues = core.merge_cues(dialogue, windows)
-    subtitle_output = core.render(cues, suffix, notes)
-    payload = subtitle_output.encode("utf-8")
+    source = _source_metadata(args, ddd_source)
+
+    result.update({
+        "mode": "dry-run" if args.dry_run else "generate",
+        "source": source,
+        # The three named targets are reported whether or not they were asked
+        # for, so a caller reads one shape in every mode. ``filesWritten`` is
+        # the fact: it stays empty until publication has actually happened.
+        "output": str(args.output) if args.output is not None else None,
+        "preview": str(args.verify) if args.verify is not None else None,
+        "provenance": str(args.provenance) if args.provenance is not None else None,
+        "filesWritten": [],
+        "selectedEvents": len(kept),
+        "excludedEvents": len(dropped),
+        "dialogueCues": len(dialogue),
+        "warningWindows": len(windows),
+        "notes": list(notes),
+    })
 
     report("{} dialogue cue{} kept, {} warning window{} from {} selected event{}.".format(
         len(dialogue), "" if len(dialogue) == 1 else "s",
@@ -503,6 +820,13 @@ def run(args, report):
     ))
     for note in notes:
         report(note)
+
+    if args.dry_run:
+        report("Dry run complete. No files were written.")
+        return EXIT_OK
+
+    subtitle_output = core.render(cues, suffix, notes)
+    payload = subtitle_output.encode("utf-8")
 
     targets = [(args.output, payload)]
     if args.verify is not None:
@@ -514,38 +838,80 @@ def run(args, report):
             raise TriggerWarningsError("the preview render produced no image data")
         targets.append((args.verify, png))
         report("Rendered a preview frame at {:.3f}s.".format(target_ms / 1000.0))
+    if args.provenance is not None:
+        targets.append((args.provenance, _provenance_payload(
+            args, source, kept, dropped, windows, dialogue, notes
+        )))
 
-    publish(targets)
+    result["filesWritten"] = [str(path) for path in publish(targets)]
 
     report("Wrote {}.".format(args.output))
     if args.verify is not None:
         report("Wrote {}. {}".format(args.verify, _RENDER_CAVEAT))
+    if args.provenance is not None:
+        report("Wrote {}.".format(args.provenance))
     report(_SYNC_CAVEAT)
     return EXIT_OK
 
 
 def main(argv=None):
     parser = build_parser()
-    args = parser.parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    # The pre-parse answer covers a failure during parsing itself; the parsed
+    # flag replaces it below, and both closures read whichever is current.
+    # Nothing has been reported at the point of the swap, so the two answers can
+    # never disagree about a message that has already gone out.
+    speaks_json = _json_requested(arguments)
+    messages = []
 
-    def report(message):
-        print(message, file=sys.stderr)
+    def report(message, level="info"):
+        messages.append({"level": level, "message": message})
+        if not speaks_json:
+            print(message, file=sys.stderr)
+
+    def fail(code, message):
+        if speaks_json:
+            print(json.dumps({
+                "ok": False,
+                "error": {"code": code, "message": message},
+                "messages": messages,
+            }, sort_keys=True))
+        else:
+            print("error: {}".format(message), file=sys.stderr)
+        return EXIT_ERROR
 
     try:
-        return run(args, report)
+        args = parser.parse_args(arguments)
+        speaks_json = bool(args.json_output)
+        result = {}
+        status = run(args, report, result)
+        if args.json_output:
+            result["ok"] = True
+            result["messages"] = messages
+            print(json.dumps(result, sort_keys=True))
+        return status
     except TriggerWarningsError as error:
-        print("error: {}".format(error), file=sys.stderr)
-        return EXIT_ERROR
+        return fail("invalid-input", str(error))
     except KeyboardInterrupt:
-        print("error: interrupted", file=sys.stderr)
-        return EXIT_ERROR
+        return fail("interrupted", "interrupted")
     except Exception as error:  # media failures and anything the OS refuses
         # media is deliberately lazy so subtitle-only use has no FFmpeg
         # requirement. MediaError subclasses ValueError, which keeps this
         # resilient to future media-specific subclasses without eager imports.
         if isinstance(error, (ValueError, OSError)):
-            print("error: {}".format(error), file=sys.stderr)
-            return EXIT_ERROR
+            return fail("operation-failed", str(error))
+        if speaks_json:
+            # A caller that asked for JSON gets JSON even when the tool is the
+            # thing that broke: a traceback on stderr with nothing on stdout is
+            # unparseable, and an agent reads it as "no answer" rather than
+            # "failed". The exception type is reported and its text is not,
+            # because an unexpected exception carries whatever the failing
+            # library put in it, which can include a request or a credential.
+            return fail(
+                "internal-error",
+                "unexpected internal failure ({}). Re-run without --json to see "
+                "the traceback.".format(type(error).__name__),
+            )
         raise
 
 
