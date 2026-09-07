@@ -4,8 +4,14 @@ Credentials reach this tool from the environment and from nowhere else. That is
 deliberate: there is no credential file to read, so there is no ambient key to
 pick up by accident and none of the tool's own writes can leak one. A wizard
 inherits that constraint and cannot escape it, because a child process cannot
-set its parent shell's environment. So a guided run ends in an export block to
-paste or evaluate, never in a file this tool wrote.
+set its parent shell's environment. So a run ends by naming what to export and
+where to obtain it, never by writing a file and never by claiming to have
+configured anything.
+
+Nothing here prints a credential, including one the caller already has. A
+"copy your working configuration" helper was written and then removed for
+exactly that reason: it would have put secrets on stdout, which is the one
+property this module is checked against.
 
 The checks answer one question per source: can this machine actually do the
 thing, right now. Where that is answerable for free it is answered for real,
@@ -273,25 +279,6 @@ def next_steps(checks, able):
             "JSON file and pass --events with --subtitles."
         )
     return steps
-
-
-def export_block(variables):
-    """Shell lines that put the named variables into the caller's environment.
-
-    Values are read from the current environment, so this only ever re-states
-    what the caller already has. It exists for `eval`, which is the only way a
-    child process can affect its parent's shell.
-    """
-    lines = []
-    for name in variables:
-        value = os.environ.get(name)
-        if value:
-            lines.append("export {}={}".format(name, _quote(value)))
-    return "\n".join(lines)
-
-
-def _quote(value):
-    return "'" + str(value).replace("'", "'\\''") + "'"
 
 
 def summary(checks):

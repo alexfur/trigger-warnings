@@ -166,24 +166,6 @@ class CapabilityTests(unittest.TestCase):
         self.assertTrue(any("--events" in step for step in steps))
 
 
-class ExportBlockTests(unittest.TestCase):
-    def test_values_are_shell_quoted(self):
-        import os as _os
-        original = _os.environ.get("TW_TEST_VAR")
-        _os.environ["TW_TEST_VAR"] = "it's a value"
-        try:
-            self.assertEqual("export TW_TEST_VAR='it'\\''s a value'",
-                             wizard.export_block(["TW_TEST_VAR"]))
-        finally:
-            if original is None:
-                del _os.environ["TW_TEST_VAR"]
-            else:
-                _os.environ["TW_TEST_VAR"] = original
-
-    def test_unset_variables_are_skipped(self):
-        self.assertEqual("", wizard.export_block(["TW_DEFINITELY_UNSET_VAR"]))
-
-
 class CliTests(unittest.TestCase):
     def _run(self, argv, environ):
         import os as _os
