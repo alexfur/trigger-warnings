@@ -35,7 +35,9 @@ that object; never scrape the prose report.
   and `dry-run` whether or not the flag was passed, so never read them as
   evidence that a file exists. `filesWritten` is that evidence.
 - `notes` and `messages` carry the data-quality caveats. Read every one and
-  surface them to the user. Do not summarise them away.
+  surface them to the user. Do not summarise them away. The selected and
+  excluded categories are reported in `messages` too, as prose; there is no
+  field of their own to read.
 
 Argument errors come back in the same shape, so one parser covers every failure.
 

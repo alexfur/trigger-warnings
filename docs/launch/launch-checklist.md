@@ -79,19 +79,46 @@ No known failing test. Nothing in this table is a launch blocker.
 
 ### Final validation
 
-Filled in at Milestone 6.
+Run 2026-09-07 on macOS 26.6.2 arm64, Python 3.9.6, FFmpeg 8.0.1, against a
+fresh `git clone` of the working branch unless noted.
 
-- [ ] `python -m pytest`
-- [ ] `python -m build`
-- [ ] `python -m twine check dist/*`
-- [ ] Clean-checkout first run, no account, no network, no keychain
-- [ ] Wheel install smoke test in a new virtual environment
-- [ ] Wizard path in a real terminal, no live credentials entered
-- [ ] Every README anchor, internal link and asset path
-- [ ] README rendered as GitHub-flavoured Markdown
-- [ ] Visual assets legible at GitHub and mobile widths
-- [ ] Coding-agent prompt reasoned through line by line
-- [ ] Diff reviewed for secrets, personal paths, copyrighted media and version changes
+| # | Check | Evidence |
+| --- | --- | --- |
+| 1 | `python -m pytest` | `454 passed, 2 skipped` |
+| 2 | `python3 -m unittest discover -s tests` | `Ran 456 tests` `OK (skipped=2)` |
+| 3 | `RUN_MEDIA_TESTS=1 python3 -m unittest discover -s tests` | `Ran 456 tests` `OK` |
+| 4 | `python -m build` | Built `trigger_warnings-0.3.0.tar.gz` and `trigger_warnings-0.3.0-py3-none-any.whl` |
+| 5 | `python -m twine check dist/*` | `PASSED` for both artefacts |
+| 6 | Clean-checkout first run: no account, no network, no keychain, no FFmpeg | Ran the documented command with `PATH=/usr/bin:/bin`, an empty `HOME` and a `sitecustomize` that refuses every socket connect. Exit 0, 1168 byte output, `git status` shows only the new file. |
+| 7 | Acceptance test from the specification, verbatim | Fresh clone, venv, `pip install .`, then the documented command writing to `/tmp`. `test -s` passes. |
+| 8 | Wheel install smoke test | New virtual environment, `pip install dist/*.whl`, `trigger-warnings --version` reports `0.3.0`, the no-account command exits 0 with a 1168 byte output. |
+| 9 | Wizard in a real terminal, no live credentials entered | Driven through a pseudo-terminal. `--setup` shows `Set this up now? [Y/n]`; `--setup --save` walks all three steps with hidden prompts and Enter skips each. Nothing entered, nothing stored, exit 0. |
+| 10 | No prompt in JSON or non-interactive mode | `--setup --json` and `--setup --save </dev/null` both return without prompting. |
+| 11 | Every README anchor, internal link and asset path | 32 links across 13 documents resolve. GitHub's own Markdown API generates all five heading anchors the README links to. |
+| 12 | README rendered as GitHub-flavoured Markdown | Rendered through `POST /markdown` and screenshotted. The first screen carries name, tagline, explanation, safety limit and the GIF, in that order. |
+| 13 | Visual assets legible at GitHub and mobile widths | Checked at 1012px and at a 358px column. Two defects found and fixed: the GIF opened on a blank frame, and the terminal card rendered near 5.8px on a phone. Both corrected in `dd9d878`. |
+| 14 | Assets reproducible from a clean checkout | `python3 scripts/make_visuals.py --check` reports `same` for all three. |
+| 15 | Coding-agent prompt reasoned through line by line | See the walkthrough below. |
+| 16 | Diff reviewed | `git diff 898bcd6..HEAD`: no secret, no token, no personal path, no hostname, no copyrighted media and no version change. The only change to shipped code is the FFmpeg error message. |
+
+#### Coding-agent prompt walkthrough
+
+Each claim in the prompt was checked against the tool rather than assumed.
+
+| Prompt line | Checked |
+| --- | --- |
+| Read `--help` first, on its own | `--json --help` still prints plain text and exits 0. |
+| `--setup --json`, stop on a missing credential | Reports three missing credentials, exits 0 and prompts for nothing. `ready` is `false` while `timestampsFromFile` and `dialogueFromFile` stay `true`, so the tool is still usable. |
+| The person runs `--setup --save` in their own terminal | Confirmed through a pseudo-terminal. The prompts are hidden and the tool writes no file. |
+| Never ask for a secret in chat, never ask to export or copy one | Present, and the prompt says why: there is nothing an agent can do with a credential that the person cannot do by running setup. |
+| `--ddd-search` shows candidates, the agent never chooses | The search mode selects nothing and refuses the generation flags. |
+| `--dry-run` without `--category` shows categories and stops | Confirmed. It lists the categories and windows, then reports `Dry run complete. No files were written.` |
+| A new `--output` and a `--provenance` sidecar, never overwrite | An existing output is refused with `Existing files are never replaced; choose a new name.` |
+| Branch on `ok`, report `filesWritten` and `notes` | Confirmed against a real result object, including the failure shape `{"ok": false, "error": {...}}`. |
+| The selected and excluded categories | Corrected during this check. They are prose in `messages`, not a field of their own. The README and the skill now say so. |
+
+The prompt stops at step 1 whenever a credential is missing, so it never
+reaches a step that could handle a secret.
 
 ## Public repository and PyPI owner actions
 

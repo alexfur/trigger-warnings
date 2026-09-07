@@ -254,10 +254,11 @@ Read `trigger-warnings --help` first, on its own.
 4. Generate only the categories I name, using a new `--output` and a
    `--provenance` sidecar. Never invent a timestamp and never overwrite a file.
 
-Use `--json` for every run except `--help` and `--version`. Branch on `ok`, report
-`filesWritten`, the selected and excluded categories, and every note. A warning
-ending is not an all-clear, and no matching events does not prove a video is free
-of anything.
+Use `--json` for every run except `--help` and `--version`. Branch on `ok`, never on
+an error code. Report `filesWritten`, every entry in `notes`, and the selected and
+excluded categories, which the result reports as prose in `messages` rather than as
+a field of their own. A warning ending is not an all-clear, and no matching events
+does not prove a video is free of anything.
 ```
 
 The [agent skill](skills/trigger-warnings/SKILL.md) carries the same rules in a
