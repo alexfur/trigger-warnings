@@ -33,16 +33,20 @@ of someone browsing a launch page.
 
 | | |
 | --- | --- |
-| What it shows | The synthetic demo video playing. It opens on a clear frame, the generic `TRIGGER INCOMING` banner appears at the top, then a dialogue line appears at the bottom while the banner is still up. |
+| What it shows | The synthetic demo video playing. The generic `TRIGGER INCOMING` banner is up from the first frame, a dialogue line appears underneath it, the banner ends, and a second one arrives. |
 | Source | `scripts/make_demo.py` plus `examples/events.json`, burned in with libass from the track the tool generated. |
 | Placement | README, directly under the one-sentence explanation. Product Hunt gallery, first item. |
-| Dimensions | 720 x 405, 12 seconds, 10fps, 120 frames, 14 KB |
-| Alt text | `A silent demo video plays. A generic TRIGGER INCOMING banner appears at the top of the frame twenty seconds before the event, then a line of ordinary dialogue appears at the bottom while the banner is still showing.` |
+| Dimensions | 720 x 405, 12 seconds, 10fps, 120 frames, 20 KB |
+| Alt text | `A silent demo video plays. A generic TRIGGER INCOMING banner sits at the top of the frame, a line of ordinary dialogue appears at the bottom underneath it, the banner ends, then a second banner arrives ahead of the next event.` |
 | Regenerate | `python3 scripts/make_visuals.py` |
 
-The window is 6s to 18s of the demo, chosen because it contains the whole
-story: no banner, banner, banner with dialogue. The banner leads the event by
-the default 20 seconds, so the event itself is off the end of the clip.
+The window is 28s to 40s of the demo. It was moved there from 6s to 18s
+because the earlier window opened on four seconds of empty frame, which made a
+blank rectangle wherever the GIF appears as a still rather than playing, such
+as a gallery thumbnail. The new window carries the banner from frame one and
+still shows the whole cycle: banner, banner with dialogue, banner gone, next
+banner. Both events lead by the default 20 seconds, so neither event itself is
+in the clip.
 
 ### `assets/preview.png`
 
@@ -67,15 +71,20 @@ differently.
 | What it shows | A terminal card carrying the no-account command and the report the tool printed in response, verbatim. |
 | Source | The documented first-run command, captured by `scripts/make_visuals.py` inside a copy of `examples/`, so every path in it is relative. |
 | Placement | README, in `Try it in two minutes`. Product Hunt gallery, fourth item. |
-| Dimensions | 860 x 334, 3 KB |
+| Dimensions | 640 x 366, 3 KB |
 | Alt text | `A terminal card. The command runs trigger-warnings against the bundled example files and the tool reports three dialogue cues kept, two warning windows, one event with no end time, and the file it wrote.` |
 | Regenerate | `python3 scripts/make_visuals.py` |
 
 SVG rather than a screenshot on purpose. The text stays readable in the diff,
 so a reviewer can check that the picture says what the tool said, and it stays
-legible when GitHub scales it down on a phone. It is a rendering of captured
-output, not a photograph of a terminal, and it carries no personal path,
-hostname or credential because the capture runs with relative paths only.
+sharp when GitHub scales it. Card width is a legibility decision, not a layout
+one: what a phone sees is the font size divided by the card width. The card was
+860 wide with 14px text, which renders near 5.8px in a 358px column and cannot
+be read. It is now 640 wide with 15px text, which renders near 8.4px.
+
+It is a rendering of captured output, not a photograph of a terminal, and it
+carries no personal path, hostname or credential because the capture runs with
+relative paths only.
 `tests/test_first_run.py` compares the embedded text with what the tool prints
 today, so a stale card fails the suite.
 

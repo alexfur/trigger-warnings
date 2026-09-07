@@ -26,16 +26,26 @@ ASSETS = ROOT / "assets"
 EXAMPLES = ROOT / "examples"
 
 # The demo runs 60 seconds. Warnings sit at 10-34s and 35-55s, dialogue at
-# 12-17s, 30-33s and 51-54s. This window opens on a clear frame, shows the
-# banner arrive, then shows banner and dialogue together.
-GIF_START = 6
-GIF_END = 18
+# 12-17s, 30-33s and 51-54s. This window carries the banner from its first
+# frame, so a still thumbnail is not a blank rectangle, then shows dialogue
+# under the banner, the banner ending, and a second one arriving.
+GIF_START = 28
+GIF_END = 40
 GIF_FPS = 10
 GIF_WIDTH = 720
 
+# The card is deliberately narrow. What matters for legibility is the ratio of
+# font size to viewBox width, because GitHub scales the whole SVG down to the
+# column: at a 358px phone column, 15px in a 640 wide card renders near 8.4px,
+# where 14px in an 860 wide card renders near 5.8px and is unreadable.
+TERMINAL_WRAP = 64
+TERMINAL_WIDTH = 640
+TERMINAL_FONT = 15
+TERMINAL_LINE = 22
+
 TERMINAL_COMMAND = [
-    "$ trigger-warnings --subtitles examples/dialogue.srt \\",
-    "      --events examples/events.json --output example.warned.ass",
+    "$ .venv/bin/trigger-warnings --subtitles examples/dialogue.srt \\",
+    "    --events examples/events.json --output example.warned.ass",
 ]
 
 
@@ -47,7 +57,7 @@ def run(argv, **kwargs):
     return subprocess.run(argv, **kwargs)
 
 
-def wrap(text, width=74):
+def wrap(text, width=TERMINAL_WRAP):
     """Wrap report prose the way a narrow terminal would."""
     lines = []
     for paragraph in text.splitlines():
@@ -93,21 +103,16 @@ def terminal_svg(report):
     SVG rather than a screenshot on purpose: the text stays readable in the
     diff, so a reviewer can check that the picture says what the tool said.
     """
-    lines = list(TERMINAL_COMMAND) + [""] + wrap(report)
-    line_height, top, left = 21, 62, 26
-    height = top + line_height * len(lines) + 20
-    width = 860
+    typed = [(line, "cmd") for line in TERMINAL_COMMAND] + [("", "out")]
+    typed += [(line, "good" if line.startswith("Wrote ") else "out")
+              for line in wrap(report)]
+    line_height, top, left = TERMINAL_LINE, 62, 22
+    height = top + line_height * len(typed) + 18
+    width = TERMINAL_WIDTH
 
     rows = []
-    for index, line in enumerate(lines):
+    for index, (line, css) in enumerate(typed):
         y = top + index * line_height
-        css = "out"
-        if line.startswith("$"):
-            css = "cmd"
-        elif line.startswith("      "):
-            css = "cmd"
-        elif line.startswith("Wrote "):
-            css = "good"
         rows.append(
             '    <text x="{}" y="{}" class="mono {}" xml:space="preserve">{}'
             "</text>".format(left, y, css, html.escape(line))
@@ -127,7 +132,7 @@ width="{width}" height="{height}" role="img" aria-labelledby="tw-term-title tw-t
   <style>
     .chrome {{ fill: #f6f8fa; stroke: #d0d7de; }}
     .screen {{ fill: #ffffff; }}
-    .mono   {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }}
+    .mono   {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: {font}px; }}
     .cmd    {{ fill: #1f2328; font-weight: 600; }}
     .out    {{ fill: #57606a; }}
     .good   {{ fill: #115e59; font-weight: 600; }}
@@ -156,7 +161,7 @@ width="{width}" height="{height}" role="img" aria-labelledby="tw-term-title tw-t
 """.format(
         width=width, height=height, inner=width - 1, iheight=height - 1,
         screen=width - 2, sheight=height - 35, title=html.escape(title),
-        desc=html.escape(desc), rows="\n".join(rows),
+        desc=html.escape(desc), rows="\n".join(rows), font=TERMINAL_FONT,
     )
 
 

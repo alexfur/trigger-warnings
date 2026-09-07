@@ -13,7 +13,7 @@ guarantee every warning is present.
 
 <p align="center">
   <img src="assets/demo.gif" width="720"
-       alt="A silent demo video plays. A generic TRIGGER INCOMING banner appears at the top of the frame twenty seconds before the event, then a line of ordinary dialogue appears at the bottom while the banner is still showing.">
+       alt="A silent demo video plays. A generic TRIGGER INCOMING banner sits at the top of the frame, a line of ordinary dialogue appears at the bottom underneath it, the banner ends, then a second banner arrives ahead of the next event.">
 </p>
 
 > **This does not detect scenes and it never gives an all-clear.** Every
@@ -49,7 +49,7 @@ The tool reports what it selected and names the file it created. `example.warned
 is new, and neither example file is touched.
 
 <p align="center">
-  <img src="assets/terminal.svg" width="720"
+  <img src="assets/terminal.svg" width="640"
        alt="A terminal card. The command runs trigger-warnings against the bundled example files and the tool reports three dialogue cues kept, two warning windows, one event with no end time, and the file it wrote.">
 </p>
 

@@ -84,7 +84,7 @@ how you make the thing, not what the thing is.
 
 | Order | Asset | Caption |
 | --- | --- | --- |
-| 1 | `assets/demo.gif` | The banner arrives twenty seconds ahead, over ordinary dialogue. It never says what is coming. |
+| 1 | `assets/demo.gif` | The banner runs ahead of the scene, over ordinary dialogue, then clears and returns for the next one. It never says what is coming. |
 | 2 | `assets/preview.png` | Warning at the top, your dialogue at the bottom. The original subtitles are untouched. |
 | 3 | `assets/terminal.svg` | One command, no account. The tool says what it selected and what it wrote. |
 | 4 | `assets/workflow.svg` | Your dialogue and your timestamps in, a dry run, then new files. Nothing is overwritten. |

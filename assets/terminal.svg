@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 334" width="860" height="334" role="img" aria-labelledby="tw-term-title tw-term-desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 366" width="640" height="366" role="img" aria-labelledby="tw-term-title tw-term-desc">
   <title id="tw-term-title">A terminal running the no-account example</title>
   <desc id="tw-term-desc">A terminal window. The command trigger-warnings is run with --subtitles examples/dialogue.srt, --events examples/events.json and --output example.warned.ass. It reports: Selected category: example (2 events) Excluded categories: none. 3 dialogue cues kept, 2 warning windows from 2 selected events. 1 event has no end time. Those warnings end at the event start and do not indicate a safe time to resume watching. Wrote example.warned.ass. Timing has not been checked against this video. Play the file and check a known warning, then check synchronisation again later in the running time. A warning ending is not an all-clear.</desc>
 
   <style>
     .chrome { fill: #f6f8fa; stroke: #d0d7de; }
     .screen { fill: #ffffff; }
-    .mono   { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+    .mono   { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; }
     .cmd    { fill: #1f2328; font-weight: 600; }
     .out    { fill: #57606a; }
     .good   { fill: #115e59; font-weight: 600; }
@@ -23,22 +23,23 @@
     }
   </style>
 
-  <rect x="0.5" y="0.5" width="859" height="333" rx="10" class="chrome"/>
-  <rect x="1" y="34" width="858" height="299" class="screen"/>
+  <rect x="0.5" y="0.5" width="639" height="365" rx="10" class="chrome"/>
+  <rect x="1" y="34" width="638" height="331" class="screen"/>
   <circle cx="24" cy="18" r="5" class="dot"/>
   <circle cx="42" cy="18" r="5" class="dot"/>
   <circle cx="60" cy="18" r="5" class="dot"/>
   <text x="82" y="22" class="mono label">trigger-warnings</text>
-    <text x="26" y="62" class="mono cmd" xml:space="preserve">$ trigger-warnings --subtitles examples/dialogue.srt \</text>
-    <text x="26" y="83" class="mono cmd" xml:space="preserve">      --events examples/events.json --output example.warned.ass</text>
-    <text x="26" y="104" class="mono out" xml:space="preserve"></text>
-    <text x="26" y="125" class="mono out" xml:space="preserve">Selected category: example (2 events)</text>
-    <text x="26" y="146" class="mono out" xml:space="preserve">Excluded categories: none.</text>
-    <text x="26" y="167" class="mono out" xml:space="preserve">3 dialogue cues kept, 2 warning windows from 2 selected events.</text>
-    <text x="26" y="188" class="mono out" xml:space="preserve">1 event has no end time. Those warnings end at the event start and do not</text>
-    <text x="26" y="209" class="mono out" xml:space="preserve">  indicate a safe time to resume watching.</text>
-    <text x="26" y="230" class="mono good" xml:space="preserve">Wrote example.warned.ass.</text>
-    <text x="26" y="251" class="mono out" xml:space="preserve">Timing has not been checked against this video. Play the file and check a</text>
-    <text x="26" y="272" class="mono out" xml:space="preserve">  known warning, then check synchronisation again later in the running</text>
-    <text x="26" y="293" class="mono out" xml:space="preserve">  time. A warning ending is not an all-clear.</text>
+    <text x="22" y="62" class="mono cmd" xml:space="preserve">$ .venv/bin/trigger-warnings --subtitles examples/dialogue.srt \</text>
+    <text x="22" y="84" class="mono cmd" xml:space="preserve">    --events examples/events.json --output example.warned.ass</text>
+    <text x="22" y="106" class="mono out" xml:space="preserve"></text>
+    <text x="22" y="128" class="mono out" xml:space="preserve">Selected category: example (2 events)</text>
+    <text x="22" y="150" class="mono out" xml:space="preserve">Excluded categories: none.</text>
+    <text x="22" y="172" class="mono out" xml:space="preserve">3 dialogue cues kept, 2 warning windows from 2 selected events.</text>
+    <text x="22" y="194" class="mono out" xml:space="preserve">1 event has no end time. Those warnings end at the event start</text>
+    <text x="22" y="216" class="mono out" xml:space="preserve">  and do not indicate a safe time to resume watching.</text>
+    <text x="22" y="238" class="mono good" xml:space="preserve">Wrote example.warned.ass.</text>
+    <text x="22" y="260" class="mono out" xml:space="preserve">Timing has not been checked against this video. Play the file</text>
+    <text x="22" y="282" class="mono out" xml:space="preserve">  and check a known warning, then check synchronisation again</text>
+    <text x="22" y="304" class="mono out" xml:space="preserve">  later in the running time. A warning ending is not an</text>
+    <text x="22" y="326" class="mono out" xml:space="preserve">  all-clear.</text>
 </svg>
