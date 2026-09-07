@@ -7,6 +7,13 @@ launch blocker, not a deferred nicety.
 Status key: `[x]` done and evidenced, `[ ]` outstanding, `[owner]` needs the
 repository owner and cannot be done by an implementation agent.
 
+| Document | What it covers |
+| --- | --- |
+| [release.md](release.md) | What is already proven, the owner steps to publish, known limitations. |
+| [visuals.md](visuals.md) | Every asset, its fixture, placement, alt text and regeneration command. |
+| [product-hunt.md](product-hunt.md) | Taglines, descriptions, gallery, maker comment, replies, community posts. |
+| [tester-script.md](tester-script.md) | What to send five to eight external testers, and how to act on what comes back. |
+
 ## Decision record
 
 | Decision | Value | Note |
@@ -25,13 +32,17 @@ repository owner and cannot be done by an implementation agent.
 
 None of these may be performed by an implementation agent.
 
-- [ ] `[owner]` Confirm the PyPI project name `trigger-warnings` is available or already held.
-- [ ] `[owner]` Configure PyPI Trusted Publishing for this repository and the `pypi` environment.
+- [ ] `[owner]` Confirm the PyPI project name `trigger-warnings` is available or already held. A read-only check on 2026-09-07 returned `404` from `https://pypi.org/pypi/trigger-warnings/json`, so no project of that name is registered. Nothing was submitted.
+- [ ] `[owner]` Configure PyPI Trusted Publishing for this repository and the `pypi` environment. Steps in [release.md](release.md).
+- [ ] `[owner]` Create the `pypi` GitHub environment, with a required reviewer if a manual gate is wanted.
 - [ ] `[owner]` Make the GitHub repository public.
-- [ ] `[owner]` Set the repository description to the approved tagline.
-- [ ] `[owner]` Add repository topics.
+- [ ] `[owner]` Set the repository description to `Spoiler-free trigger warnings for local video.`
+- [ ] `[owner]` Add repository topics: `subtitles`, `accessibility`, `video`, `cli`, `python`.
+- [ ] `[owner]` Decide on GitHub Discussions. It is currently off and nothing links to it.
 - [ ] `[owner]` Create the version tag and GitHub release that triggers publication.
 - [ ] `[owner]` Confirm the published PyPI page and install the released package.
+- [ ] `[owner]` Decide whether to switch the README image paths to absolute raw URLs so they render on PyPI. See the limitations table in [release.md](release.md).
+- [ ] `[owner]` Pin a launch issue or discussion, if one is created.
 - [ ] `[owner]` Create the Product Hunt listing and post the maker comment.
 - [ ] `[owner]` Send the community launch posts.
 - [ ] `[owner]` Recruit the external testers and collect their reports.
@@ -84,15 +95,16 @@ Filled in at Milestone 6.
 
 ## Public repository and PyPI owner actions
 
-See the owner list above, and `release.md` for the exact steps and the order.
+See the owner list above, and [release.md](release.md) for the exact steps and
+the order.
 
 ## Visual assets approval
 
-- [ ] `[owner]` Approve the assets listed in `visuals.md`.
+- [ ] `[owner]` Approve the assets listed in [visuals.md](visuals.md).
 
 ## Tester results and required fixes
 
-Anonymised results from `tester-script.md`.
+Anonymised results from [tester-script.md](tester-script.md).
 
 | Tester | Reached a rendered warning | What they thought it does | First confusing step | Action |
 | --- | --- | --- | --- | --- |
@@ -101,7 +113,7 @@ Anonymised results from `tester-script.md`.
 ## Product Hunt setup
 
 - [ ] `[owner]` Maker profile complete.
-- [ ] `[owner]` Gallery uploaded in the order given in `product-hunt.md`.
+- [ ] `[owner]` Gallery uploaded in the order given in [product-hunt.md](product-hunt.md).
 - [ ] `[owner]` Maker comment ready to post at launch.
 - [ ] `[owner]` First-day replies to hand.
 
