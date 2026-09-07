@@ -206,6 +206,17 @@ class ProbeTests(MediaTestCase):
                 media.probe(self.video)
         self.assertIn("ffprobe", str(caught.exception))
 
+    def test_missing_binary_names_ffmpeg_and_the_way_round_it(self):
+        """People install FFmpeg, not ffprobe, and the first run needs neither."""
+        self.patch_run(fake_run())
+        with mock.patch.object(media.shutil, "which", return_value=None):
+            with self.assertRaises(media.MediaError) as caught:
+                media.probe(self.video)
+        message = str(caught.exception)
+        self.assertIn("FFmpeg", message)
+        self.assertIn("--subtitles", message)
+        self.assertIn("--events", message)
+
     def test_non_zero_exit_includes_the_ffprobe_message(self):
         self.patch_run(fake_run(returncode=1, stdout="{}\n",
                                 stderr="Invalid data found when processing input"))

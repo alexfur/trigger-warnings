@@ -52,7 +52,13 @@ def _resolved_file(path, flag="video"):
 def _binary(name):
     value = shutil.which(name)
     if not value:
-        raise MediaError("{} is required on PATH".format(name))
+        # Naming the missing program is not enough: people install "FFmpeg",
+        # not "ffprobe", and the first run never needs either.
+        raise MediaError(
+            "{} was not found on PATH. It ships with FFmpeg, which this option "
+            "needs. Install FFmpeg, or pass --subtitles with --events instead, "
+            "which needs no FFmpeg.".format(name)
+        )
     return value
 
 
