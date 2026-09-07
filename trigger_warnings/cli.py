@@ -27,7 +27,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import __version__, core, wizard
+from . import __version__, core, keychain, wizard
 from .core import TriggerWarningsError
 
 EXIT_OK = 0
@@ -379,6 +379,16 @@ def build_parser():
         "--setup", action="store_true",
         help="check the prerequisites, say what is missing and where to get it, "
              "then stop; add --json for a machine-readable report",
+    )
+    parser.add_argument(
+        "--save", action="store_true",
+        help="with --setup, store the credentials in the operating system "
+             "keychain so later runs need no exported variables",
+    )
+    parser.add_argument(
+        "--forget", action="store_true",
+        help="with --setup, remove every credential this tool stored in the "
+             "operating system keychain",
     )
     parser.add_argument(
         "--no-verify", dest="verify_credentials", action="store_false",
@@ -953,6 +963,8 @@ def _reject_os_flags(args, mode, allowed):
         ("--dry-run", args.dry_run, False),
         ("--list-streams", args.list_streams, False),
         ("--setup", args.setup, False),
+        ("--save", args.save, False),
+        ("--forget", args.forget, False),
         ("--language", args.language, _DEFAULT_LANGUAGE),
     )
     supplied = [
@@ -989,6 +1001,84 @@ _SETUP_MARKS = {
 }
 
 
+def _prompt_for(variable, prompt_fn=None):
+    """Ask for one credential on the terminal, never echoing it back."""
+    import getpass
+    if prompt_fn is not None:
+        return prompt_fn(variable)
+    if variable.endswith("USERNAME"):
+        try:
+            return input("{}: ".format(variable)).strip()
+        except EOFError:
+            return ""
+    return getpass.getpass("{} (not shown): ".format(variable)).strip()
+
+
+def _save_credentials(args, report, environ, prompt_fn=None):
+    """Store what we have, asking for what we do not, and never store junk.
+
+    Validation happens before the write, so a key that does not work cannot be
+    persisted and then quietly reused for weeks.
+    """
+    store = keychain.backend()
+    if not store:
+        raise TriggerWarningsError(
+            "no supported keychain here, so --save has nowhere to write. "
+            "macOS security and libsecret's secret-tool are the two it knows. "
+            "Export the variables instead."
+        )
+    interactive = sys.stdin.isatty() and not args.json_output
+    for variable in keychain.VARIABLES:
+        if (environ.get(variable) or "").strip():
+            continue
+        if not interactive:
+            continue
+        value = _prompt_for(variable, prompt_fn)
+        if value:
+            environ[variable] = value
+
+    present = [v for v in keychain.VARIABLES if (environ.get(v) or "").strip()]
+    if not present:
+        raise TriggerWarningsError(
+            "nothing to save: no credential is set, and there is no terminal "
+            "to ask on. Export what you have, then re-run with --save."
+        )
+
+    if args.verify_credentials:
+        for check in (wizard.check_ddd(environ=environ),
+                      wizard.check_opensubtitles_key(environ=environ)):
+            if check.status == wizard.INVALID:
+                raise TriggerWarningsError(
+                    "{} was refused, so nothing was saved. {}".format(
+                        check.variable, check.detail)
+                )
+
+    saved, failed = [], []
+    for variable in present:
+        if keychain.store_value(variable, environ[variable], store=store):
+            saved.append(variable)
+        else:
+            failed.append(variable)
+    if saved:
+        report("Saved {} to {}.".format(", ".join(saved), keychain.describe(store)))
+    if failed:
+        report("Could not save {}.".format(", ".join(failed)), level="warning")
+    return saved, failed
+
+
+def _forget_credentials(report):
+    store = keychain.backend()
+    if not store:
+        raise TriggerWarningsError(
+            "no supported keychain here, so there is nothing this tool stored."
+        )
+    removed = [v for v in keychain.VARIABLES if keychain.forget(v, store=store)]
+    report("Removed {} from {}.".format(
+        ", ".join(removed) if removed else "nothing",
+        keychain.describe(store)))
+    return removed
+
+
 def _run_setup(args, report, result):
     """Report what is installed and configured, then stop.
 
@@ -1001,6 +1091,16 @@ def _run_setup(args, report, result):
     than on the exit code. That matches --dry-run, which also succeeds while
     reporting that nothing was produced.
     """
+    sources = dict(getattr(args, "credential_sources", {}) or {})
+    removed, saved = None, None
+    if args.forget:
+        removed = _forget_credentials(report)
+        sources = {k: v for k, v in sources.items() if v != keychain.KEYCHAIN}
+    if args.save:
+        saved, _unsaved = _save_credentials(args, report, os.environ)
+        for variable in saved:
+            sources.setdefault(variable, keychain.ENVIRONMENT)
+
     checks = wizard.collect(verify=args.verify_credentials)
     able = wizard.capabilities(checks)
     steps = wizard.next_steps(checks, able)
@@ -1010,8 +1110,11 @@ def _run_setup(args, report, result):
     report("trigger-warnings {} setup check ({}).".format(
         wizard.version(), wizard.summary(checks)))
     for check in checks:
-        report("{} {}: {}".format(
-            _SETUP_MARKS.get(check.status, "  ?      "), check.name, check.detail))
+        origin = sources.get(check.variable)
+        report("{} {}: {}{}".format(
+            _SETUP_MARKS.get(check.status, "  ?      "), check.name, check.detail,
+            " Read from {}.".format(keychain.describe())
+            if origin == keychain.KEYCHAIN else ""))
         if check.fix:
             report("           -> {}{}".format(
                 check.fix, " See {}".format(check.url) if check.url else ""))
@@ -1026,6 +1129,8 @@ def _run_setup(args, report, result):
         "ready": ready,
         "verified": bool(args.verify_credentials),
         "capabilities": able,
+        "credentialSources": sources,
+        "keychain": keychain.backend(),
         "nextSteps": steps,
         "checks": [
             {
@@ -1052,12 +1157,15 @@ def run(args, report, result=None):
         _reject_os_flags(
             args,
             "--setup only reports what is installed and configured",
-            allowed=("--setup",),
+            allowed=("--setup", "--save", "--forget"),
         )
         return _run_setup(args, report, result)
 
     if not args.verify_credentials:
         raise TriggerWarningsError("--no-verify only applies to --setup")
+    for flag, value in (("--save", args.save), ("--forget", args.forget)):
+        if value:
+            raise TriggerWarningsError("{} only applies to --setup".format(flag))
 
     if args.list_streams:
         if args.video is None:
@@ -1296,6 +1404,12 @@ def main(argv=None):
     try:
         args = parser.parse_args(arguments)
         speaks_json = bool(args.json_output)
+        # The environment wins and a stored credential only fills a blank.
+        # Done once, here, so every module downstream still reads the
+        # environment and nothing else, which keeps that claim literally true.
+        # Skipped for --forget: loading what you asked to delete would make the
+        # report that follows describe a state that no longer exists.
+        args.credential_sources = {} if args.forget else keychain.hydrate()
         result = {}
         status = run(args, report, result)
         if args.json_output:

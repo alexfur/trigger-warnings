@@ -28,8 +28,15 @@ trigger-warnings --setup
 
 `--setup` checks the whole machine: Python, FFmpeg, and every credential. A key that is already
 set is **proved by calling the API**, not merely noticed, and anything missing is named with the
-variable to export and the page to get it from. It writes nothing, changes nothing and is safe
-to re-run. Add `--no-verify` to skip the network, or `--json` to let an agent read it.
+variable to export and the page to get it from. Add `--no-verify` to skip the network, or
+`--json` to let an agent read it.
+
+Export what it asks for, then run it once more as `trigger-warnings --setup --save`. That proves
+the credentials work and stores them in your operating system's keychain, so no later shell has
+to export anything. `--setup --forget` removes them again. An exported variable always wins over
+a stored one, a credential that fails its check is never saved, and no file is written either
+way: on macOS this is the login keychain, on Linux libsecret, and where there is neither the
+tool says so and keeps using the environment.
 
 Every run then needs two things: a **dialogue track** and **timestamps**. The quickest route uses
 the subtitle track already inside your video, so it needs no OpenSubtitles account and no files

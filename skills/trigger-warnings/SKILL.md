@@ -67,6 +67,13 @@ credential to a file, never pass one as a command line argument, and never echo
 one back to the user or into your own transcript. There is no flag for the
 OpenSubtitles username or password, by design.
 
+`credentialSources` names where each one came from, `environment` or `keychain`,
+and `keychain` names the backend or is `null` where there is none. If the user
+would rather not re-export every session, offer `--setup --save`: it verifies
+first and stores only what works, in the operating system keychain and never in
+a file. Offer it, never run it unasked, and never run `--setup --forget`, which
+deletes what is stored, unless the user asks for that in those terms.
+
 ## Establish the inputs
 
 Confirm the dialogue SRT, the event timestamps, the selected categories and the
