@@ -1,0 +1,49 @@
+name: Bug report
+description: Something the tool did wrong, or a command that failed.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach a credential, an API key, a personal video or a
+        subtitle file you do not own.** Replace any key in a pasted command
+        with `REDACTED`. A suspected vulnerability goes to the
+        [security policy](https://github.com/alexfur/trigger-warnings/blob/main/SECURITY.md)
+        instead, never here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `trigger-warnings --version`.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python version
+      placeholder: "macOS 15.3, Python 3.12.4"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      description: With every credential removed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      description: Include the error, if there was one.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: This report contains no credential, key, password or personal media.
+          required: true
