@@ -54,25 +54,27 @@ not to run it first.
 - `checks[]` carries one row per prerequisite with a `status` of `ok`, `missing`,
   `invalid` or `unverified`. `missing` and `invalid` rows carry `variable`, the
   environment variable to set, `url`, the page that issues it, and `fix`, the
-  single next action. Ask the user for exactly those, and nothing else.
+  single next action. Never ask the user to paste one into chat. Tell them to
+  run `trigger-warnings --setup --save` in their own terminal, enter it in the
+  hidden prompt, then run `--setup --json` again.
 - `unverified` means the check could not reach the network, **not** that the
   credential is wrong. Do not tell the user to replace a key on an `unverified`
   row. `--no-verify` produces the same status deliberately.
 - The exit code is 0 whenever the checks ran. "Not configured" is an answer, not
   a command failure, so branch on `ready` and `checks[]`, never on the exit code.
 
-Credentials are read from the environment and from nowhere else. Put what the
-user gives you into the environment of the commands you run. Never write a
-credential to a file, never pass one as a command line argument, and never echo
-one back to the user or into your own transcript. There is no flag for the
-OpenSubtitles username or password, by design.
+Credentials come from the environment first and, only when the user opted in,
+the operating system keychain second. Never collect a credential in chat, write
+one to a file, pass one as a command line argument, or echo one into the user
+reply or your transcript. There is no flag for the OpenSubtitles username or
+password, by design.
 
 `credentialSources` names where each one came from, `environment` or `keychain`,
-and `keychain` names the backend or is `null` where there is none. If the user
-would rather not re-export every session, offer `--setup --save`: it verifies
-first and stores only what works, in the operating system keychain and never in
-a file. Offer it, never run it unasked, and never run `--setup --forget`, which
-deletes what is stored, unless the user asks for that in those terms.
+and `keychain` names the backend or is `null` where there is none. The terminal
+wizard verifies API keys before it stores them in the operating system keychain,
+and never writes a file. Tell the user how to start it, but never run it on
+their behalf and never run `--setup --forget`, which deletes stored values,
+unless the user asks for that in those terms.
 
 ## Establish the inputs
 
@@ -124,12 +126,14 @@ ratings is an error, not evidence that a title is free of triggers.
 This fetches the *dialogue* track. It adds no warnings, and it is a separate mode
 from generation that refuses the generation flags.
 
-Credentials never go on the command line. The API key may come from
-`--os-api-key` or `OPENSUBTITLES_API_KEY`; prefer the variable. The username and
-password come from `OPENSUBTITLES_USERNAME` and `OPENSUBTITLES_PASSWORD` and have
-no flag at all, so never offer to pass them as arguments and never write them to
-a file. No credential file is read. If any is missing, the error names the
-variable; ask the user to export it rather than trying to supply it yourself.
+Create or sign in to an OpenSubtitles account before visiting its API consumer
+page. Logged-out visitors are redirected to the sign-in page. The API key may
+come from `--os-api-key` or `OPENSUBTITLES_API_KEY`; prefer the variable. The
+username and password come from `OPENSUBTITLES_USERNAME` and
+`OPENSUBTITLES_PASSWORD` and have no flag at all, so never offer to pass them as
+arguments and never write them to a file. No credential file is read. If any is
+missing, direct the user to the local setup wizard rather than trying to supply
+it yourself.
 
 Search first, and let the user choose:
 

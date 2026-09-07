@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.3.0"
 description = "Add advance warnings to dialogue subtitles using supplied event timestamps"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "Alex Furman"}]
 dependencies = []
 keywords = ["subtitles", "trigger-warnings", "accessibility", "srt", "ass", "cli"]
@@ -18,7 +19,10 @@ classifiers = [
   "Intended Audience :: End Users/Desktop",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
-  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Operating System :: OS Independent",
   "Topic :: Multimedia :: Video",
   "Topic :: Text Processing :: Markup",

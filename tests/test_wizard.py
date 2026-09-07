@@ -8,6 +8,7 @@ import io
 import json
 import unittest
 from urllib.error import HTTPError, URLError
+from unittest import mock
 
 from trigger_warnings import cli, wizard
 
@@ -211,6 +212,131 @@ class CliTests(unittest.TestCase):
         joined = "\n".join(messages)
         for check in result["checks"]:
             self.assertIn(check["name"], joined)
+
+    def test_tty_setup_invites_but_a_pipe_does_not(self):
+        class Prompter:
+            interactive = True
+
+            def __init__(self):
+                self.confirmed = False
+
+            def confirm(self, unused):
+                self.confirmed = True
+                return False
+
+        args = cli.build_parser().parse_args(["--setup", "--no-verify"])
+        prompt = Prompter()
+        cli.run(args, lambda *unused: None, {}, setup_prompter=prompt)
+        self.assertTrue(prompt.confirmed)
+
+        class Pipe:
+            interactive = False
+
+        cli.run(args, lambda *unused: None, {}, setup_prompter=Pipe())
+
+    def test_refused_key_is_reprompted_at_most_three_times_and_removed(self):
+        class Prompter:
+            def __init__(self):
+                self.values = iter((_FAKE_DDD_KEY,) * 3)
+
+            def secret(self, unused):
+                return next(self.values)
+
+            def emphasise(self, text):
+                return text
+
+        args = cli.build_parser().parse_args(["--setup"])
+        environment = {}
+        messages = []
+        refused = wizard.Check(
+            "ddd-api-key", wizard.INVALID, "synthetic", None,
+            wizard.DDD_KEY_VARIABLE, None, False)
+        with mock.patch.object(cli, "_check_credential",
+                               lambda *unused: refused):
+            self.assertFalse(cli._ask_for_verified_key(
+                wizard.DDD_KEY_VARIABLE, "step", "loss", wizard.DDD_SIGNUP_URL,
+                args, lambda message, level="info": messages.append(message),
+                environment, Prompter()))
+        self.assertNotIn(wizard.DDD_KEY_VARIABLE, environment)
+        self.assertEqual(3, sum("was refused" in message for message in messages))
+        self.assertNotIn(_FAKE_DDD_KEY, "\n".join(messages))
+
+    def test_guided_setup_keeps_secrets_in_the_prompt_and_saves_valid_values(self):
+        class Prompter:
+            interactive = True
+            colour = False
+
+            def __init__(self):
+                self.secrets = iter((_FAKE_DDD_KEY, _FAKE_OS_KEY, "a-password"))
+                self.texts = iter(("someone",))
+
+            def secret(self, unused):
+                return next(self.secrets)
+
+            def text(self, unused):
+                return next(self.texts)
+
+            def confirm(self, unused):
+                raise AssertionError("--save must not ask for confirmation")
+
+            def emphasise(self, text):
+                return text
+
+        def collected(environ=None, **unused):
+            environ = environ or {}
+            def check(name, variable=None):
+                return wizard.Check(
+                    name, wizard.OK if environ.get(variable) else wizard.MISSING,
+                    "synthetic", None, variable, None, False)
+            return [
+                wizard.Check("python", wizard.OK, "synthetic", None, None, None, True),
+                wizard.Check("ffmpeg", wizard.OK, "synthetic", None, None, None, False),
+                check("ddd-api-key", wizard.DDD_KEY_VARIABLE),
+                check("opensubtitles-api-key", "OPENSUBTITLES_API_KEY"),
+                wizard.Check(
+                    "opensubtitles-login",
+                    wizard.OK if (environ.get("OPENSUBTITLES_USERNAME")
+                                  and environ.get("OPENSUBTITLES_PASSWORD"))
+                    else wizard.MISSING,
+                    "synthetic", None, "OPENSUBTITLES_USERNAME", None, False),
+            ]
+
+        saved = []
+        args = cli.build_parser().parse_args(["--setup", "--save"])
+        environment = {}
+        messages = []
+        with mock.patch.object(wizard, "collect", collected), \
+             mock.patch.object(cli, "_check_credential",
+                               lambda variable, environ: wizard.Check(
+                                   variable, wizard.OK, "synthetic", None,
+                                   variable, None, False)), \
+             mock.patch.object(cli.keychain, "backend", lambda: cli.keychain.MACOS), \
+             mock.patch.object(cli.keychain, "store_value",
+                               lambda variable, value, store=None:
+                               saved.append((variable, value, store)) or True), \
+             mock.patch.object(cli.os, "environ", environment):
+            cli.run(args, lambda message, level="info": messages.append(message), {},
+                    setup_prompter=Prompter())
+        self.assertEqual({
+            "DDD_API_KEY", "OPENSUBTITLES_API_KEY", "OPENSUBTITLES_USERNAME",
+            "OPENSUBTITLES_PASSWORD"}, {entry[0] for entry in saved})
+        self.assertTrue(any("1/3" in message for message in messages))
+        self.assertTrue(any("Jaws" in message and "10154" in message
+                            for message in messages))
+        self.assertNotIn(_FAKE_DDD_KEY, "\n".join(messages))
+        self.assertNotIn(_FAKE_OS_KEY, "\n".join(messages))
+
+
+class PromptTests(unittest.TestCase):
+    def test_colour_needs_a_tty_and_respects_no_color_and_dumb_term(self):
+        self.assertTrue(wizard.SetupPrompter(
+            isatty=lambda: True, environ={"TERM": "xterm"}).colour)
+        self.assertFalse(wizard.SetupPrompter(
+            isatty=lambda: False, environ={"TERM": "xterm"}).colour)
+        self.assertFalse(wizard.SetupPrompter(
+            isatty=lambda: True, environ={"NO_COLOR": "1", "TERM": "xterm"}).colour)
+        self.assertFalse(wizard.SetupPrompter(
+            isatty=lambda: True, environ={"TERM": "dumb"}).colour)
 
 
 if __name__ == "__main__":  # pragma: no cover

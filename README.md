@@ -26,17 +26,17 @@ source .venv/bin/activate
 trigger-warnings --setup
 ```
 
-`--setup` checks the whole machine: Python, FFmpeg, and every credential. A key that is already
-set is **proved by calling the API**, not merely noticed, and anything missing is named with the
-variable to export and the page to get it from. Add `--no-verify` to skip the network, or
-`--json` to let an agent read it.
+`--setup` checks the whole machine: Python, FFmpeg and every credential. In a terminal, if
+anything it can configure is missing, it asks `Set this up now? [Y/n]`. Answering yes opens a
+three-step flow: it explains what each skipped credential prevents, links to the signup page,
+hides secret input, proves API keys live and stores valid values in the operating system keychain.
+Run `trigger-warnings --setup --save` to start that flow without the question.
 
-Export what it asks for, then run it once more as `trigger-warnings --setup --save`. That proves
-the credentials work and stores them in your operating system's keychain, so no later shell has
-to export anything. `--setup --forget` removes them again. An exported variable always wins over
-a stored one, a credential that fails its check is never saved, and no file is written either
-way: on macOS this is the login keychain, on Linux libsecret, and where there is neither the
-tool says so and keeps using the environment.
+Add `--no-verify` to skip the network, or `--json` to let an agent read the report. JSON and
+non-terminal runs never prompt. `--setup --forget` removes stored values. An exported variable
+always wins over a stored one, a credential that fails its check is never saved, and no credential
+file is read or written: on macOS values go to the login keychain, on Linux to libsecret. Where
+neither is available, the tool continues to use the environment.
 
 Every run then needs two things: a **dialogue track** and **timestamps**. The quickest route uses
 the subtitle track already inside your video, so it needs no OpenSubtitles account and no files
@@ -106,9 +106,10 @@ Read `trigger-warnings --help` first, on its own.
 
 0. Run `trigger-warnings --setup --json`. It reports every prerequisite, proves each
    credential against its API, and names the variable and signup page for anything
-   missing. Ask me for exactly what it lists, export it into the environment you run
-   the later commands in, and re-run `--setup` until `ready` is true. Never write a
-   credential to a file, and never put one in a command line argument.
+   missing. Never ask me to paste a credential into this chat or put one in a command
+   line argument. Instead, tell me to run `trigger-warnings --setup --save` in my own
+   terminal and type the values into its hidden prompts. Then re-run `--setup --json`
+   until `ready` is true. Never write a credential to a file.
 1. Find the title with `--ddd-search` and show me the candidates. Never pick for me.
 2. With the ID I choose, run `--dry-run` with NO `--category` flag: that reports the
    categories this title actually has. Show me that list and stop.
@@ -182,6 +183,10 @@ with your own OpenSubtitles account. Searching and downloading are separate mode
 warnings and refuse the generation flags: they only fetch the track `--subtitles` then takes.
 
 **1. Search.** This needs the API key alone, and `--os-search` never picks a file for you.
+
+Create or sign in to an OpenSubtitles account before visiting the
+[API consumer page](https://www.opensubtitles.com/en/consumers). Logged-out visitors are sent to
+the sign-in page. Register an API consumer there to obtain the key.
 
 ```sh
 export OPENSUBTITLES_API_KEY='your-key'

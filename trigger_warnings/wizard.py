@@ -1,12 +1,11 @@
 """Prerequisite checks and guided setup.
 
-Credentials reach this tool from the environment and from nowhere else. That is
-deliberate: there is no credential file to read, so there is no ambient key to
-pick up by accident and none of the tool's own writes can leak one. A wizard
-inherits that constraint and cannot escape it, because a child process cannot
-set its parent shell's environment. So a run ends by naming what to export and
-where to obtain it, never by writing a file and never by claiming to have
-configured anything.
+Credentials reach this tool from the environment first and, after an explicit
+choice, the operating system keychain second. That is deliberate: there is no
+credential file to read, so there is no ambient key to pick up by accident and
+none of the tool's own writes can leak one. A child process cannot set its
+parent shell's environment. The guided flow therefore stores a validated value
+only in the keychain and never claims to have changed the caller's shell.
 
 Nothing here prints a credential, including one the caller already has. A
 "copy your working configuration" helper was written and then removed for
@@ -51,6 +50,58 @@ OS_SIGNUP_URL = "https://www.opensubtitles.com/en/consumers"
 #: credential, not the query, is the problem.
 _PROBE_TITLE = "Jaws"
 _PROBE_YEAR = 1975
+
+
+class SetupPrompter:
+    """The small, injectable terminal surface used by the guided setup.
+
+    Keeping this behind a value object makes the safety rule testable: a pipe
+    must never receive a question that waits for an answer.  It also keeps
+    passwords out of the ordinary ``input`` path, whose echo behaviour is
+    wrong for credentials.
+    """
+
+    def __init__(self, input_fn=None, secret_fn=None, isatty=None, environ=None):
+        self._input = input if input_fn is None else input_fn
+        self._secret = secret_fn
+        self._isatty = sys.stdin.isatty if isatty is None else isatty
+        self._environ = os.environ if environ is None else environ
+
+    @property
+    def interactive(self):
+        return bool(self._isatty())
+
+    @property
+    def colour(self):
+        """Whether terminal control sequences are safe and wanted."""
+        return (self.interactive
+                and not self._environ.get("NO_COLOR")
+                and self._environ.get("TERM") != "dumb")
+
+    def text(self, label):
+        try:
+            return self._input(label).strip()
+        except EOFError:
+            return ""
+
+    def secret(self, label):
+        if self._secret is None:
+            import getpass
+            secret_fn = getpass.getpass
+        else:
+            secret_fn = self._secret
+        try:
+            return secret_fn(label).strip()
+        except EOFError:
+            return ""
+
+    def confirm(self, label):
+        answer = self.text(label).lower()
+        return answer in ("", "y", "yes")
+
+    def emphasise(self, text):
+        """Return a modest heading style without leaking ANSI into logs."""
+        return "\033[1;36m{}\033[0m".format(text) if self.colour else text
 
 
 def _redact(text, secrets):

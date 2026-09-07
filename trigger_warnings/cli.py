@@ -1001,21 +1001,8 @@ _SETUP_MARKS = {
 }
 
 
-def _prompt_for(variable, prompt_fn=None):
-    """Ask for one credential on the terminal, never echoing it back."""
-    import getpass
-    if prompt_fn is not None:
-        return prompt_fn(variable)
-    if variable.endswith("USERNAME"):
-        try:
-            return input("{}: ".format(variable)).strip()
-        except EOFError:
-            return ""
-    return getpass.getpass("{} (not shown): ".format(variable)).strip()
-
-
-def _save_credentials(args, report, environ, prompt_fn=None):
-    """Store what we have, asking for what we do not, and never store junk.
+def _save_credentials(args, report, environ):
+    """Store credentials already present in the environment, never store junk.
 
     Validation happens before the write, so a key that does not work cannot be
     persisted and then quietly reused for weeks.
@@ -1027,21 +1014,11 @@ def _save_credentials(args, report, environ, prompt_fn=None):
             "macOS security and libsecret's secret-tool are the two it knows. "
             "Export the variables instead."
         )
-    interactive = sys.stdin.isatty() and not args.json_output
-    for variable in keychain.VARIABLES:
-        if (environ.get(variable) or "").strip():
-            continue
-        if not interactive:
-            continue
-        value = _prompt_for(variable, prompt_fn)
-        if value:
-            environ[variable] = value
-
     present = [v for v in keychain.VARIABLES if (environ.get(v) or "").strip()]
     if not present:
         raise TriggerWarningsError(
-            "nothing to save: no credential is set, and there is no terminal "
-            "to ask on. Export what you have, then re-run with --save."
+            "nothing to save: no credential is set. Export what you have, "
+            "or run --setup in a terminal to enter it there."
         )
 
     if args.verify_credentials:
@@ -1079,12 +1056,131 @@ def _forget_credentials(report):
     return removed
 
 
-def _run_setup(args, report, result):
-    """Report what is installed and configured, then stop.
+def _needs_credential_setup(checks):
+    """Whether the wizard can fix at least one reported problem."""
+    return any(check.name in (
+        "ddd-api-key", "opensubtitles-api-key", "opensubtitles-login",
+    ) and check.status in (wizard.MISSING, wizard.INVALID) for check in checks)
 
-    This mode writes nothing and changes nothing, including the environment: a
-    child process cannot set its parent's variables, so the honest end of a
-    setup run is a statement of what to export, not a claim to have done it.
+
+def _check_credential(variable, environ):
+    if variable == wizard.DDD_KEY_VARIABLE:
+        return wizard.check_ddd(environ=environ)
+    return wizard.check_opensubtitles_key(environ=environ)
+
+
+def _ask_for_verified_key(variable, title, loss, url, args, report, environ,
+                          prompter):
+    """Ask for an API key and prove it before allowing it into the keychain."""
+    original = environ.get(variable)
+    for attempt in range(1, 4):
+        report(prompter.emphasise(title))
+        report(loss)
+        report("Get it: {}".format(url))
+        value = prompter.secret("{} (hidden, Enter skips): ".format(variable))
+        if not value:
+            return False
+        environ[variable] = value
+        if not args.verify_credentials:
+            report("{} was not checked because --no-verify was requested.".format(
+                variable))
+            return True
+        check = _check_credential(variable, environ)
+        if check.status == wizard.OK:
+            report("{} works.".format(variable))
+            return True
+        if check.status == wizard.UNVERIFIED:
+            report("Could not verify {} because the network is unavailable. "
+                   "Try again later or enter it again (attempt {}/3).".format(
+                       variable, attempt), level="warning")
+        else:
+            report("{} was refused. Check the key or make a new one, then "
+                   "try again (attempt {}/3).".format(variable, attempt),
+                   level="warning")
+    if original is None:
+        environ.pop(variable, None)
+    else:
+        environ[variable] = original
+    report("{} was not saved after three unsuccessful checks.".format(variable),
+           level="warning")
+    return False
+
+
+def _guided_setup(args, report, environ, prompter):
+    """Collect and validate credentials on a real terminal, then save them.
+
+    This is deliberately not available to JSON callers or pipes.  An agent can
+    run the report, but only the user at their terminal enters the secret.
+    """
+    store = keychain.backend()
+    if not store:
+        raise TriggerWarningsError(
+            "no supported keychain here, so guided setup has nowhere to save. "
+            "macOS security and libsecret's secret-tool are the two it knows."
+        )
+
+    report("Guided setup writes only to {}. Press Enter to skip a credential.".format(
+        keychain.describe(store)))
+    _ask_for_verified_key(
+        wizard.DDD_KEY_VARIABLE, "1/3 DoesTheDogDie",
+        "Without this key, the tool cannot fetch community timestamp data. "
+        "You can still supply your own --events file.", wizard.DDD_SIGNUP_URL,
+        args, report, environ, prompter)
+
+    report(prompter.emphasise("2/3 OpenSubtitles account and API consumer"))
+    report("Without all three values, the tool cannot download dialogue tracks. "
+           "A subtitle file you already have still works.")
+    report("Create or sign in to an OpenSubtitles account first, then register "
+           "an API consumer here: {}".format(wizard.OS_SIGNUP_URL))
+    _ask_for_verified_key(
+        "OPENSUBTITLES_API_KEY", "2/3 OpenSubtitles API key",
+        "Without this key, the tool cannot search OpenSubtitles.",
+        wizard.OS_SIGNUP_URL, args, report, environ, prompter)
+    username = prompter.text("OPENSUBTITLES_USERNAME (Enter skips): ")
+    if username:
+        environ["OPENSUBTITLES_USERNAME"] = username
+    password = prompter.secret("OPENSUBTITLES_PASSWORD (hidden, Enter skips): ")
+    if password:
+        environ["OPENSUBTITLES_PASSWORD"] = password
+
+    report(prompter.emphasise("3/3 Save validated credentials"))
+    checks = wizard.collect(environ=environ, verify=args.verify_credentials)
+    unproven = [check.variable for check in checks
+                if check.name in ("ddd-api-key", "opensubtitles-api-key")
+                and check.status != wizard.OK
+                and (environ.get(check.variable) or "").strip()
+                and args.verify_credentials]
+    if unproven:
+        report("Did not save {} because it was not proved by its API.".format(
+            ", ".join(unproven)), level="warning")
+        return [], checks
+
+    present = [variable for variable in keychain.VARIABLES
+               if (environ.get(variable) or "").strip()]
+    saved = []
+    failed = []
+    for variable in present:
+        if keychain.store_value(variable, environ[variable], store=store):
+            saved.append(variable)
+        else:
+            failed.append(variable)
+    if saved:
+        report("Saved {} to {}.".format(", ".join(saved),
+                                         keychain.describe(store)))
+    if failed:
+        report("Could not save {}.".format(", ".join(failed)), level="warning")
+    report("Next, find Jaws (1975): trigger-warnings --ddd-search 'Jaws' "
+           "--ddd-year 1975  # item 10154")
+    return saved, checks
+
+
+def _run_setup(args, report, result, prompter=None):
+    """Report what is installed and configured, and optionally guide setup.
+
+    A JSON or non-terminal run is report-only. On a terminal, a user who accepts
+    the invitation can save proven credentials in their operating system
+    keychain. Neither path writes a credential file or changes the parent shell:
+    a child process cannot set its parent's variables.
 
     It exits zero whenever the checks themselves ran. "Not configured" is an
     answer, not a failure of the command, so callers branch on ``ready`` rather
@@ -1092,11 +1188,20 @@ def _run_setup(args, report, result):
     reporting that nothing was produced.
     """
     sources = dict(getattr(args, "credential_sources", {}) or {})
+    prompter = prompter or wizard.SetupPrompter(environ=os.environ)
     removed, saved = None, None
     if args.forget:
         removed = _forget_credentials(report)
         sources = {k: v for k, v in sources.items() if v != keychain.KEYCHAIN}
-    if args.save:
+    initial_checks = wizard.collect(verify=args.verify_credentials)
+    should_guide = (prompter.interactive and not args.json_output
+                    and (args.save or _needs_credential_setup(initial_checks)))
+    if should_guide:
+        if args.save or prompter.confirm("Set this up now? [Y/n] "):
+            saved, _checks = _guided_setup(args, report, os.environ, prompter)
+            for variable in saved:
+                sources[variable] = keychain.KEYCHAIN
+    elif args.save:
         saved, _unsaved = _save_credentials(args, report, os.environ)
         for variable in saved:
             sources.setdefault(variable, keychain.ENVIRONMENT)
@@ -1148,7 +1253,7 @@ def _run_setup(args, report, result):
     return EXIT_OK
 
 
-def run(args, report, result=None):
+def run(args, report, result=None, setup_prompter=None):
     """Run one command and optionally fill a machine-readable result mapping."""
     if result is None:
         result = {}
@@ -1159,7 +1264,7 @@ def run(args, report, result=None):
             "--setup only reports what is installed and configured",
             allowed=("--setup", "--save", "--forget"),
         )
-        return _run_setup(args, report, result)
+        return _run_setup(args, report, result, prompter=setup_prompter)
 
     if not args.verify_credentials:
         raise TriggerWarningsError("--no-verify only applies to --setup")
