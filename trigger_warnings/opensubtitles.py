@@ -476,10 +476,19 @@ def _status_hint(code, what):
         403: "Either the API key was refused, or the User-Agent was. This tool "
              "sends {!r}, which is the format OpenSubtitles requires; a refused "
              "key is the likelier of the two.".format(USER_AGENT),
+        # The docs list a fourth cause, a missing Accept header, which is
+        # deliberately not repeated here: _headers always sends one, so it is
+        # not a cause a reader of this message can have, and naming it sends
+        # them to check something they cannot change. The related worry, that
+        # the docs advise Accept: */* while this client sends
+        # application/json, was settled by probing the live /subtitles
+        # endpoint: application/json, */* and no Accept header at all each
+        # returned a byte-identical 200, so the header is not honoured and
+        # what this client sends is accepted.
         406: "Documented causes are a spent daily download quota, a file id "
-             "that is not valid, an expired sign-in, or a missing Accept "
-             "header. Whether a refused request still counts against the "
-             "quota is not documented, so treat this run as possibly charged.",
+             "that is not valid, or an expired sign-in. Whether a refused "
+             "request still counts against the quota is not documented, so "
+             "treat this run as possibly charged.",
         410: "The resource is gone.",
         # The ~1/s figure that used to sit here is the SIGN-IN limit, not the
         # general one. Stating it as general sends the user to fix a
