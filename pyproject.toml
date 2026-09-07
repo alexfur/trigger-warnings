@@ -11,12 +11,23 @@ requires-python = ">=3.9"
 license = {file = "LICENSE"}
 authors = [{name = "Alex Furman"}]
 dependencies = []
+keywords = ["subtitles", "trigger-warnings", "accessibility", "srt", "ass", "cli"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Text Processing :: Markup",
 ]
+
+[project.urls]
+Homepage = "https://github.com/alexfur/trigger-warnings"
+Repository = "https://github.com/alexfur/trigger-warnings"
+Issues = "https://github.com/alexfur/trigger-warnings/issues"
 
 [project.scripts]
 trigger-warnings = "trigger_warnings.cli:main"
