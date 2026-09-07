@@ -105,20 +105,19 @@ visitors are redirected to sign-in.
 
 </details>
 
-<details>
-<summary>Use a coding agent safely</summary>
+### Use a coding agent safely
 
-Let the agent inspect the machine without prompting:
+**You enter secrets. The agent runs everything else.** Do not run the wizard in
+the agent's terminal and do not paste a credential into chat.
 
-```sh
-trigger-warnings --setup --json
-```
+| Step | You | Coding agent |
+| --- | --- | --- |
+| 1 | Name the video and what you want warnings for | Run `trigger-warnings --setup --json` |
+| 2 | If credentials are missing, open your own terminal and run `trigger-warnings --setup --save` | Stop and wait. Never ask for, export or handle a credential |
+| 3 | Type credentials only into the wizard's hidden prompts | Run `trigger-warnings --setup --json` again, then find the title and make the track |
 
-If the report names a missing credential, run `trigger-warnings --setup --save`
-yourself and type it into the local hidden prompt. Do not paste it into a chat,
-issue, command or file. Then let the agent run `--setup --json` again.
-
-</details>
+The agent receives only the final setup report, never the credential. The full
+copy-and-paste instruction block is in [Use it with a coding agent](#use-it-with-a-coding-agent).
 
 <details>
 <summary>Work without an account or API key</summary>
