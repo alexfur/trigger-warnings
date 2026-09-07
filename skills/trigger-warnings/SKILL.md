@@ -23,7 +23,8 @@ that object; never scrape the prose report.
 - `ok` is `true` or `false`. On failure, read `error.message`, and treat
   `error.code` as an open set of failure classes rather than a fixed list.
   Branch on `ok`; never on a code you have hardcoded.
-- `mode` is `generate`, `dry-run`, `list-streams`, `ddd-search`, `os-search` or `os-download`.
+- `mode` is `setup`, `generate`, `dry-run`, `list-streams`, `ddd-search`, `os-search`
+  or `os-download`.
 - `filesWritten` lists every path the run created, in order. It stays empty
   until publication has happened, so it is empty on `dry-run`, `list-streams`,
   `ddd-search` and `os-search`. `os-download` fills it like `generate` does. A
@@ -37,6 +38,34 @@ that object; never scrape the prose report.
   surface them to the user. Do not summarise them away.
 
 Argument errors come back in the same shape, so one parser covers every failure.
+
+## Start with `--setup`
+
+Run `trigger-warnings --setup --json` before anything else in a session where the
+user has not already configured the tool. It is read only: it writes no file,
+changes no environment and spends no download quota, so there is never a reason
+not to run it first.
+
+- `ready` is `true` when the recommended path works end to end. `capabilities`
+  is finer grained, so read it when `ready` is `false`: `timestampsFromFile` and
+  `dialogueFromFile` are always `true`, which means a run is still possible with
+  `--events` and `--subtitles` even when nothing is configured. Never tell the
+  user the tool is unusable because `ready` is `false`.
+- `checks[]` carries one row per prerequisite with a `status` of `ok`, `missing`,
+  `invalid` or `unverified`. `missing` and `invalid` rows carry `variable`, the
+  environment variable to set, `url`, the page that issues it, and `fix`, the
+  single next action. Ask the user for exactly those, and nothing else.
+- `unverified` means the check could not reach the network, **not** that the
+  credential is wrong. Do not tell the user to replace a key on an `unverified`
+  row. `--no-verify` produces the same status deliberately.
+- The exit code is 0 whenever the checks ran. "Not configured" is an answer, not
+  a command failure, so branch on `ready` and `checks[]`, never on the exit code.
+
+Credentials are read from the environment and from nowhere else. Put what the
+user gives you into the environment of the commands you run. Never write a
+credential to a file, never pass one as a command line argument, and never echo
+one back to the user or into your own transcript. There is no flag for the
+OpenSubtitles username or password, by design.
 
 ## Establish the inputs
 

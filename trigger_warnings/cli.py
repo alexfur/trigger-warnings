@@ -27,7 +27,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import __version__, core
+from . import __version__, core, wizard
 from .core import TriggerWarningsError
 
 EXIT_OK = 0
@@ -374,6 +374,16 @@ def build_parser():
     parser.add_argument(
         "--provenance", type=Path, metavar="PATH",
         help="new JSON sidecar recording source and generation details",
+    )
+    parser.add_argument(
+        "--setup", action="store_true",
+        help="check the prerequisites, say what is missing and where to get it, "
+             "then stop; add --json for a machine-readable report",
+    )
+    parser.add_argument(
+        "--no-verify", dest="verify_credentials", action="store_false",
+        help="with --setup, report which credentials are set without calling "
+             "either API to prove they work",
     )
     parser.add_argument(
         "--json", dest="json_output", action="store_true",
@@ -942,6 +952,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--offset", args.offset, 0.0),
         ("--dry-run", args.dry_run, False),
         ("--list-streams", args.list_streams, False),
+        ("--setup", args.setup, False),
         ("--language", args.language, _DEFAULT_LANGUAGE),
     )
     supplied = [
@@ -969,10 +980,84 @@ def _reject_search_generation_flags(args):
     )
 
 
+#: Fixed-width so the names line up without padding the detail text.
+_SETUP_MARKS = {
+    wizard.OK: "  ok     ",
+    wizard.MISSING: "  missing",
+    wizard.INVALID: "  INVALID",
+    wizard.UNVERIFIED: "  unknown",
+}
+
+
+def _run_setup(args, report, result):
+    """Report what is installed and configured, then stop.
+
+    This mode writes nothing and changes nothing, including the environment: a
+    child process cannot set its parent's variables, so the honest end of a
+    setup run is a statement of what to export, not a claim to have done it.
+
+    It exits zero whenever the checks themselves ran. "Not configured" is an
+    answer, not a failure of the command, so callers branch on ``ready`` rather
+    than on the exit code. That matches --dry-run, which also succeeds while
+    reporting that nothing was produced.
+    """
+    checks = wizard.collect(verify=args.verify_credentials)
+    able = wizard.capabilities(checks)
+    steps = wizard.next_steps(checks, able)
+    ready = bool(able["timestampsFromApi"] and (
+        able["dialogueFromVideo"] or able["dialogueFromOpenSubtitlesDownload"]))
+
+    report("trigger-warnings {} setup check ({}).".format(
+        wizard.version(), wizard.summary(checks)))
+    for check in checks:
+        report("{} {}: {}".format(
+            _SETUP_MARKS.get(check.status, "  ?      "), check.name, check.detail))
+        if check.fix:
+            report("           -> {}{}".format(
+                check.fix, " See {}".format(check.url) if check.url else ""))
+    if not args.verify_credentials:
+        report("Credentials were not checked against either API (--no-verify).")
+    for index, step in enumerate(steps, start=1):
+        report("{}. {}".format(index, step))
+
+    result.update({
+        "mode": "setup",
+        "filesWritten": [],
+        "ready": ready,
+        "verified": bool(args.verify_credentials),
+        "capabilities": able,
+        "nextSteps": steps,
+        "checks": [
+            {
+                "name": check.name,
+                "status": check.status,
+                "detail": check.detail,
+                "fix": check.fix,
+                "variable": check.variable,
+                "url": check.url,
+                "required": check.required,
+            }
+            for check in checks
+        ],
+    })
+    return EXIT_OK
+
+
 def run(args, report, result=None):
     """Run one command and optionally fill a machine-readable result mapping."""
     if result is None:
         result = {}
+
+    if args.setup:
+        _reject_os_flags(
+            args,
+            "--setup only reports what is installed and configured",
+            allowed=("--setup",),
+        )
+        return _run_setup(args, report, result)
+
+    if not args.verify_credentials:
+        raise TriggerWarningsError("--no-verify only applies to --setup")
 
     if args.list_streams:
         if args.video is None:

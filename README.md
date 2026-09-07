@@ -15,19 +15,25 @@ a safe-to-resume signal, and no matching events does not mean the video is free 
 
 ## Quickstart
 
-Every run needs two things: a **dialogue track** and **timestamps**. The quickest route uses the
-subtitle track already inside your video, so it needs no OpenSubtitles account and no files of
-your own.
+Install it, then let the wizard tell you what else you need:
 
 ```sh
 git clone https://github.com/alexfur/trigger-warnings.git
 cd trigger-warnings
 python3 -m venv .venv && .venv/bin/python -m pip install .
-source .venv/bin/activate     # so the commands below are just `trigger-warnings`
+source .venv/bin/activate
+
+trigger-warnings --setup
 ```
 
-Get your own [DoesTheDogDie API key](https://www.doesthedogdie.com/api), then run three commands
-against the film you are about to watch:
+`--setup` checks the whole machine: Python, FFmpeg, and every credential. A key that is already
+set is **proved by calling the API**, not merely noticed, and anything missing is named with the
+variable to export and the page to get it from. It writes nothing, changes nothing and is safe
+to re-run. Add `--no-verify` to skip the network, or `--json` to let an agent read it.
+
+Every run then needs two things: a **dialogue track** and **timestamps**. The quickest route uses
+the subtitle track already inside your video, so it needs no OpenSubtitles account and no files
+of your own. That is three commands against the film you are about to watch:
 
 ```sh
 export DDD_API_KEY='your-key'
@@ -91,6 +97,11 @@ Export your own key, then paste this. It works with any coding agent.
 Use the `trigger-warnings` CLI to build a warned subtitle track for the video I named.
 Read `trigger-warnings --help` first, on its own.
 
+0. Run `trigger-warnings --setup --json`. It reports every prerequisite, proves each
+   credential against its API, and names the variable and signup page for anything
+   missing. Ask me for exactly what it lists, export it into the environment you run
+   the later commands in, and re-run `--setup` until `ready` is true. Never write a
+   credential to a file, and never put one in a command line argument.
 1. Find the title with `--ddd-search` and show me the candidates. Never pick for me.
 2. With the ID I choose, run `--dry-run` with NO `--category` flag: that reports the
    categories this title actually has. Show me that list and stop.
