@@ -1,13 +1,15 @@
 ---
 name: trigger-warnings
-description: Add advance trigger warnings to local dialogue subtitles using supplied event timestamps or the opt-in official DoesTheDogDie API source, and fetch the dialogue track itself from OpenSubtitles with the user's own account. Use when preparing warning subtitles for VLC or checking warning placement and synchronisation. Does not infer scene timestamps.
+description: Add advance trigger warnings to local dialogue subtitles using supplied event timestamps, the opt-in official DoesTheDogDie API source, or an explicitly requested local video-model scan, and fetch the dialogue track itself from OpenSubtitles with the user's own account. Use when preparing warning subtitles for VLC or checking warning placement and synchronisation. Model results are candidates, not verified scene timestamps.
 ---
 
 # Trigger warnings
 
 The `trigger-warnings` CLI merges warning banners into a dialogue subtitle track.
-It does not detect scenes, so every timestamp comes from the user or from the
-official DoesTheDogDie API with the user's own key.
+It does not promise complete scene detection. Timestamps come from the user,
+the official DoesTheDogDie API with the user's own key, or an explicitly
+requested local model scan. Model timestamps cover sampled chunks and must be
+reviewed before use.
 
 Run `trigger-warnings --help` before building a command, on its own and without
 `--json`. From the repository without installing, use `python3 -m
@@ -23,8 +25,9 @@ that object; never scrape the prose report.
 - `ok` is `true` or `false`. On failure, read `error.message`, and treat
   `error.code` as an open set of failure classes rather than a fixed list.
   Branch on `ok`; never on a code you have hardcoded.
-- `mode` is `setup`, `generate`, `dry-run`, `list-streams`, `ddd-search`, `os-search`
-  or `os-download`.
+- `mode` is `setup`, `generate`, `model-scan`, `dry-run`, `list-streams`,
+  `ddd-search`, `os-search` or `os-download`. A model scan with `--dry-run`
+  reports `dry-run` and still performs inference; `filesWritten` remains empty.
 - `filesWritten` lists every path the run created, in order. It stays empty
   until publication has happened, so it is empty on `dry-run`, `list-streams`,
   `ddd-search` and `os-search`. `os-download` fills it like `generate` does. A
@@ -94,6 +97,19 @@ end is not a safe position.
 Never invent scene times, read them off a plot summary, copy subscriber-only
 records or fetch protected timelines. Ask for a missing input that blocks
 generation rather than substituting a clean result.
+
+### The local model source
+
+This source is opt-in and local. It needs Apple Silicon, FFmpeg and the optional
+extra (`pip install 'trigger-warnings[vision]'`). Pass `--video` and one or
+more repeated `--model-trigger` values. The default is the
+`mlx-community/SmolVLM2-500M-Video-Instruct-mlx` model; `--model` and
+`--model-revision` override it. The scanner samples frames, asks a strict yes/no
+question per trigger and chunk, and marks a positive chunk as
+`severity: "model-candidate"`. It does not claim frame-level precision, and a
+scan with no candidates refuses to write a subtitle rather than implying an
+all-clear. Surface every model note in the result and ask the user to inspect
+the generated track.
 
 ### The official API source
 

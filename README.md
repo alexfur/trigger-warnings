@@ -4,7 +4,8 @@
 
 Create a separate subtitle track that shows a generic warning before scenes you
 choose. It never changes the video or original subtitles, and it cannot
-guarantee every warning is present.
+guarantee every warning is present. You can supply timestamps yourself, use
+DoesTheDogDie, or opt in to a local video model that proposes candidate times.
 
 **Two free accounts do the work for you.** DoesTheDogDie supplies the
 timestamps, OpenSubtitles supplies the dialogue track, and one setup command
@@ -22,10 +23,11 @@ timestamps and skip both accounts.
        alt="A silent demo video plays. A generic TRIGGER INCOMING banner sits at the top of the frame, a line of ordinary dialogue appears at the bottom underneath it, the banner ends, then a second banner arrives ahead of the next event.">
 </p>
 
-> **This does not detect scenes and it never gives an all-clear.** Every
-> timestamp comes from you or from a source you chose. Check each warning
-> against the copy you plan to watch: missing data, a different edition or a
-> playback fault can all leave a warning out.
+> **A model scan is a first pass, not a detector or an all-clear.** Model
+> candidates cover the sampled chunk rather than an exact frame and can miss
+> brief or visually ambiguous events. Check every warning against the copy you
+> plan to watch: missing data, a different edition or a playback fault can all
+> leave a warning out.
 
 ## Install
 
@@ -38,6 +40,12 @@ python3 -m venv .venv
 
 Python 3.9 or newer is required. There are no runtime dependencies. FFmpeg is
 needed only to read a subtitle track out of a video file or to render a preview.
+
+To use the optional local model scanner on Apple Silicon, install its extra:
+
+```sh
+.venv/bin/python -m pip install 'trigger-warnings[vision]'
+```
 
 <details>
 <summary>Install without a virtual environment, or after the first release</summary>
@@ -151,6 +159,27 @@ trigger-warnings --dry-run --subtitles jaws.srt --ddd-item 10154 \
 
 This lists the categories with timestamps and the warning windows it would
 produce, then stops. It writes nothing.
+
+### Or scan the video locally
+
+The model path is deliberately explicit. Repeat `--model-trigger` for each
+trigger you want checked; it samples the video in short chunks, asks a local
+vision model a yes/no question for each trigger, and feeds positive chunks into
+the same subtitle writer:
+
+```sh
+trigger-warnings --video jaws.mkv --model-trigger 'blood' \
+  --model-trigger 'a dog is injured' --subtitles jaws.srt \
+  --output jaws.model-warnings.ass --provenance jaws.model.provenance.json
+```
+
+The default model is `mlx-community/SmolVLM2-500M-Video-Instruct-mlx`. Use
+`--model` (and optionally `--model-revision`) to choose another MLX-VLM model.
+`--model-fps`, `--model-chunk` and `--model-width` trade speed for coverage.
+The command writes no subtitle if the model returns no candidates. Review the
+result before watching, and treat every timestamp as a model candidate rather
+than a verified fact. `--dry-run` still performs the scan but publishes no
+files.
 
 ### 4. Write the track for the categories you want
 

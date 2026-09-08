@@ -254,9 +254,9 @@ def build_parser():
         allow_abbrev=False,
         description=(
             "Add advance warnings to a dialogue subtitle track using local event "
-            "timestamps or an explicit official DoesTheDogDie API request. This "
-            "tool does not detect scenes and cannot check that timestamps "
-            "describe your video."
+            "timestamps, an opt-in local video model or an explicit official "
+            "DoesTheDogDie API request. Model timestamps are candidates and "
+            "require checking."
         ),
         epilog=(
             "Existing files are never replaced. A missing warning can mean missing "
@@ -287,6 +287,35 @@ def build_parser():
     parser.add_argument(
         "--ddd-year", type=_year, metavar="YEAR",
         help="release year to narrow --ddd-search",
+    )
+    parser.add_argument(
+        "--model-trigger", action="append", default=[], metavar="LABEL",
+        help="ask the optional local video model about this trigger; repeat for "
+             "several; requires --video and replaces --events/--ddd-item",
+    )
+    parser.add_argument(
+        "--model", metavar="NAME_OR_PATH",
+        help="local MLX-VLM model name or path for --model-trigger",
+    )
+    parser.add_argument(
+        "--model-revision", metavar="REVISION",
+        help="model revision to load for --model-trigger",
+    )
+    parser.add_argument(
+        "--model-fps", type=_finite_float, default=1.0, metavar="FPS",
+        help="frames per second sampled by --model-trigger (default: 1)",
+    )
+    parser.add_argument(
+        "--model-chunk", type=_non_negative_seconds, default=10.0, metavar="SECONDS",
+        help="video seconds answered by one model request (default: 10)",
+    )
+    parser.add_argument(
+        "--model-width", type=_os_number, default=384, metavar="PIXELS",
+        help="frame width for --model-trigger (default: 384)",
+    )
+    parser.add_argument(
+        "--model-max-tokens", type=_os_number, default=16, metavar="TOKENS",
+        help="maximum answer tokens for --model-trigger (default: 16)",
     )
     parser.add_argument(
         "--os-search", metavar="TITLE",
@@ -703,6 +732,34 @@ def _load_ddd_events(args, report):
     return source
 
 
+def _load_model_events(args, report):
+    """Run the explicitly requested local model and return provider-neutral events."""
+    from . import vision
+
+    scan = vision.scan_video(
+        args.video,
+        args.model_trigger,
+        model=args.model or vision.DEFAULT_MODEL,
+        revision=args.model_revision,
+        fps=args.model_fps,
+        chunk_seconds=args.model_chunk,
+        width=args.model_width,
+        max_tokens=args.model_max_tokens,
+        report=report,
+    )
+    report(
+        "Local model found {} candidate event{} in {} chunk{}.".format(
+            len(scan.events),
+            "" if len(scan.events) == 1 else "s",
+            scan.metadata["chunks"],
+            "" if scan.metadata["chunks"] == 1 else "s",
+        )
+    )
+    for note in scan.notes:
+        report(note)
+    return scan
+
+
 def _search_ddd_items(args, report):
     from . import ddd
 
@@ -731,6 +788,8 @@ def _search_ddd_items(args, report):
 
 
 def _source_metadata(args, source=None):
+    if source is not None and getattr(source, "metadata", None) is not None:
+        return dict(source.metadata)
     if source is None:
         return {"kind": "local-events", "eventsPath": str(args.events)}
     return {
@@ -949,6 +1008,13 @@ def _reject_os_flags(args, mode, allowed):
         ("--ddd-search", args.ddd_search, None),
         ("--ddd-year", args.ddd_year, None),
         ("--ddd-api-key", args.ddd_api_key, None),
+        ("--model-trigger", args.model_trigger, []),
+        ("--model", args.model, None),
+        ("--model-revision", args.model_revision, None),
+        ("--model-fps", args.model_fps, 1.0),
+        ("--model-chunk", args.model_chunk, 10.0),
+        ("--model-width", args.model_width, 384),
+        ("--model-max-tokens", args.model_max_tokens, 16),
         ("--os-search", args.os_search, None),
         ("--os-file", args.os_file, None),
         ("--os-api-key", args.os_api_key, None),
@@ -1292,6 +1358,16 @@ def run(args, report, result=None, setup_prompter=None):
                     "--list-streams does not generate output; run it without "
                     "{}".format(flag)
                 )
+        for flag, value in (("--model-trigger", args.model_trigger),
+                            ("--model", args.model), ("--model-revision", args.model_revision),
+                            ("--model-fps", args.model_fps), ("--model-chunk", args.model_chunk),
+                            ("--model-width", args.model_width), ("--model-max-tokens", args.model_max_tokens)):
+            default = {"--model-fps": 1.0, "--model-chunk": 10.0,
+                       "--model-width": 384, "--model-max-tokens": 16}.get(flag)
+            if value is not None and _was_supplied(args, flag, value, default):
+                raise TriggerWarningsError(
+                    "--list-streams does not generate output; run it without {}".format(flag)
+                )
         if args.dry_run:
             raise TriggerWarningsError("--list-streams and --dry-run cannot be combined")
         _check_inputs_exist([("--video", args.video)])
@@ -1355,14 +1431,39 @@ def run(args, report, result=None, setup_prompter=None):
 
     if args.output is None and not args.dry_run:
         raise TriggerWarningsError("--output is required")
-    if args.events is None and args.ddd_item is None:
-        raise TriggerWarningsError("supply --events, or --ddd-item with an API key")
-    if args.events is not None and args.ddd_item is not None:
-        raise TriggerWarningsError("--events and --ddd-item are mutually exclusive")
+    source_modes = sum(bool(value) for value in (
+        args.events is not None, args.ddd_item is not None, bool(args.model_trigger)
+    ))
+    if source_modes == 0:
+        raise TriggerWarningsError(
+            "supply --events, --ddd-item with an API key, or one or more --model-trigger values"
+        )
+    if source_modes > 1:
+        raise TriggerWarningsError(
+            "--events, --ddd-item and --model-trigger are mutually exclusive"
+        )
+    if args.model_trigger and args.video is None:
+        raise TriggerWarningsError("--model-trigger needs --video")
+    if args.model_trigger and args.category:
+        raise TriggerWarningsError(
+            "--category cannot be combined with --model-trigger; list the requested "
+            "triggers with repeated --model-trigger flags"
+        )
     if args.ddd_item is None and args.ddd_api_key is not None:
         raise TriggerWarningsError(
             "--ddd-api-key needs --ddd-item or --ddd-search"
         )
+    if not args.model_trigger:
+        for flag, value, default in (
+            ("--model", args.model, None),
+            ("--model-revision", args.model_revision, None),
+            ("--model-fps", args.model_fps, 1.0),
+            ("--model-chunk", args.model_chunk, 10.0),
+            ("--model-width", args.model_width, 384),
+            ("--model-max-tokens", args.model_max_tokens, 16),
+        ):
+            if value is not None and _was_supplied(args, flag, value, default):
+                raise TriggerWarningsError("{} needs --model-trigger".format(flag))
     if args.dry_run and args.verify is not None:
         raise TriggerWarningsError("--dry-run cannot render --verify; it writes no files")
     if args.dry_run and args.provenance is not None:
@@ -1399,9 +1500,13 @@ def run(args, report, result=None, setup_prompter=None):
     )
 
     ddd_source = None
+    model_source = None
     if args.ddd_item is not None:
         ddd_source = _load_ddd_events(args, report)
         events = ddd_source.events
+    elif args.model_trigger:
+        model_source = _load_model_events(args, report)
+        events = core.load_events(json.dumps(model_source.events), "local model scan")
     else:
         events = core.load_events(
             _read_text(args.events, "--events"), str(args.events)
@@ -1419,11 +1524,13 @@ def run(args, report, result=None, setup_prompter=None):
         offset_ms=core.seconds_to_ms(args.offset, "--offset"),
         duration_ms=duration_ms,
     )
+    if model_source is not None:
+        notes = list(model_source.notes) + list(notes)
     cues = core.merge_cues(dialogue, windows)
-    source = _source_metadata(args, ddd_source)
+    source = _source_metadata(args, model_source or ddd_source)
 
     result.update({
-        "mode": "dry-run" if args.dry_run else "generate",
+        "mode": "dry-run" if args.dry_run else ("model-scan" if args.model_trigger else "generate"),
         "source": source,
         # The three named targets are reported whether or not they were asked
         # for, so a caller reads one shape in every mode. ``filesWritten`` is
