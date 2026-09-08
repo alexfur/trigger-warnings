@@ -24,7 +24,8 @@ repository owner and cannot be done by an implementation agent.
 | Primary audience | People who play local video in VLC or mpv and want a discreet advance warning for particular content. | They may bring their own timestamps or draw on a supported service. |
 | Promise | Create a spoiler-free subtitle track that gives advance warnings before scenes you choose in a local video. | Not detection, not an all-clear, not medical advice. |
 | Tagline | `Spoiler-free trigger warnings for local video.` | Used in the README, package description and repository description. |
-| First-run path | Source install plus the bundled `examples/` fixtures. | No account, no network, no FFmpeg. |
+| Documented happy path | Register with DoesTheDogDie and OpenSubtitles, run `--setup` once, then five commands per film. | Named on the first screen, above the fold, and given its own numbered section. |
+| First-run path | Source install plus the bundled `examples/` fixtures. | No account, no network, no FFmpeg. Positioned as an install check rather than the destination, so it cannot be mistaken for the intended workflow. |
 | PyPI install command | Documented but labelled `After the first release`. | No public release exists yet, so the README leads with the source install. |
 | Visual assets | Generated from the synthetic demo video and the bundled fixtures only. | No film clip, no personal media, no mock UI. |
 
@@ -52,7 +53,8 @@ None of these may be performed by an implementation agent.
 | Risk | Why it matters | Mitigation in this launch |
 | --- | --- | --- |
 | A visitor reads the tool as content detection. | It cannot detect scenes, and a false sense of safety is the worst possible failure. | The safety limit sits on the first screen, in the package description and in every launch draft. |
-| A visitor cannot try it without an account. | An API key in the way of the first run kills the demo. | The no-account path is the shortest documented route and uses tracked fixtures. |
+| A visitor cannot try it without an account. | An API key in the way of the first run kills the demo. | The bundled example still needs no account and sits immediately after `Install`. |
+| A visitor cannot tell what the tool normally needs. | Leading with a no-account demo hid the fact that the usual workflow is two free accounts, which reads as a bait and switch on the second screen. | The first screen names DoesTheDogDie and OpenSubtitles and says one setup command covers both. Owner instruction, 2026-09-08. |
 | A coding agent handles a credential. | Secrets must never reach an agent transcript. | The agent contract stops the agent before any secret step. The person types secrets into the local hidden prompt. |
 | Community timestamp data is thin or mismatched. | A missing warning looks like a bug and reads like a safety failure. | The README and the launch replies both say that missing data and a different edition are expected. |
 | Demo assets imply a working product feature that does not exist. | Misleading a launch audience is not recoverable. | Every asset comes from the real tool, run on synthetic input, and lists its regeneration command. |

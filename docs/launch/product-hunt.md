@@ -34,16 +34,21 @@ the benefit.
 > Some scenes are worth knowing about a few seconds early. The usual options
 > are bad ones: read a spoiler-heavy list first, or take your chances.
 >
-> Trigger Warnings takes timestamps you chose and turns them into a separate
-> subtitle track. Load it in VLC or mpv alongside the video and a generic
-> banner appears about twenty seconds before each one. The banner never names
-> the category, so you get the warning without the plot.
 >
-> Everything runs locally. There is no account, no upload and no telemetry.
-> The first run uses two example files in the repository and needs no key at
-> all. Timestamps can come from a JSON file you write, or from DoesTheDogDie
-> with your own free API key. The dialogue track can come from the video
-> itself, a file you already have, or OpenSubtitles with your own account.
+> Trigger Warnings turns timestamps into a separate subtitle track. Load it in
+> VLC or mpv alongside the video and a generic banner appears about twenty
+> seconds before each one. The banner never names the category, so you get the
+> warning without the plot.
+>
+> Two free accounts do the work. DoesTheDogDie supplies the timestamps and
+> OpenSubtitles supplies the dialogue track, so a typical film is five
+> commands: find it, fetch the dialogue, see which categories have times, write
+> the track, check it in your player. One setup command stores both
+> credentials in your operating system keychain. If you would rather not
+> register, write the times into a JSON file and skip both.
+>
+> Everything runs locally. There is no upload and no telemetry, and the two
+> services only ever see a film title or an ID.
 >
 > It cannot detect scenes and it does not tell you a video is safe. Community
 > timestamps are incomplete and may not match your edition, so a warning that
@@ -57,12 +62,14 @@ Each of these is something the tool does today.
 - Writes a new `.ass` or `.srt` warning track. Never edits the video or the
   original subtitles.
 - Shows a generic banner. It never names the category on screen.
-- Reads timestamps from your own JSON file, or from the official
-  DoesTheDogDie API with your own key.
-- Reads dialogue from a subtitle file, from a subtitle stream inside the
-  video, or from OpenSubtitles with your own account.
-- Runs entirely locally. No account is needed for the core path, and the tool
-  makes no outbound call without one.
+- Reads timestamps from the official DoesTheDogDie API with your own free
+  key, or from a JSON file you write.
+- Reads dialogue from OpenSubtitles with your own free account, from a
+  subtitle stream inside the video, or from a file you already have.
+- One `--setup` command registers both, verifying each credential before
+  storing it.
+- Runs entirely locally. The bundled example needs no account at all, and the
+  tool makes no outbound call without one.
 - Never overwrites a file, and rolls back anything a failed run created.
 - `--dry-run` shows the categories and warning windows and writes nothing.
 - `--lead`, `--tail` and `--offset` adjust timing. The offset moves events

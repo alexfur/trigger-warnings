@@ -20,9 +20,11 @@ All notable changes to this project are documented here.
 
 ### Changed
 
-- The README leads with the outcome. The no-account example is the first
-  command, and the setup wizard moved below it, because a credential must not
-  block a first successful run.
+- The README leads with the outcome, then with the path most people will
+  take: the first screen names DoesTheDogDie and OpenSubtitles, and
+  `Make a warning track for a film` walks that path in five commands. The
+  bundled no-account example is still there, as an install check rather than
+  the destination, so a credential still blocks nothing.
 - A missing FFmpeg now names FFmpeg, not just `ffprobe`, and points at the
   subtitle-only route that needs neither.
 - The package summary is the launch tagline.

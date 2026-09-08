@@ -18,10 +18,13 @@ does first. That is the thing being tested.
 >
 > 1. Open <link to the repository>. Read the first screen only, without
 >    scrolling, then tell me in your own words what you think it does and who
->    it is for.
-> 2. Now follow the `Try it in two minutes` steps. You need Python 3.9 or
->    newer and nothing else. No account, no key.
+>    it is for, and what you think it needs before it will work.
+> 2. Follow `Install`, then `Check the install, without an account`. You need
+>    Python 3.9 or newer and nothing else. No account, no key.
 > 3. Tell me whether it worked, and how long it took from opening the page.
+>    Then read `Set up the two sources` and `Make a warning track for a film`
+>    without doing them, and tell me whether you could see what the normal
+>    workflow is and what it would cost you to get started.
 > 4. If you have VLC or mpv and a video you already own, load the track you
 >    made next to it and tell me what you see. Skip this if you would rather
 >    not. It is optional.
@@ -39,8 +42,8 @@ does first. That is the thing being tested.
 
 Five short answers. Free text, not a form.
 
-1. In one sentence, what does it do and who is it for?
-2. Did the two-minute path work? How long did it take?
+1. In one sentence, what does it do and who is it for? What does it need?
+2. Did the install check work? How long did it take?
 3. Did you open the result in a player? What did you see?
 4. What was the first confusing step?
 5. Anything that felt untrustworthy, overstated or unclear about the limits?
@@ -68,6 +71,7 @@ finding:
 | --- | --- |
 | Two or more testers misread what the tool does from the first screen. | Blocker. Rewrite the first screen and retest with a fresh reader. |
 | Any tester believed a missing warning meant a video was clear. | Blocker. Strengthen the limit and retest. |
-| The two-minute path failed on a supported platform. | Blocker. Fix, add a test, then rerun the release-candidate checks. |
+| The install check failed on a supported platform. | Blocker. Fix, add a test, then rerun the release-candidate checks. |
+| A tester could not tell that the normal path uses DoesTheDogDie and OpenSubtitles. | Blocker. The first screen has to name both. Rewrite and retest. |
 | One tester was confused by a step that others passed. | Fix the wording if it is cheap. Otherwise record it and move on. |
 | A request for a feature. | Roadmap or an issue. Not a launch blocker. |

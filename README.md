@@ -6,8 +6,14 @@ Create a separate subtitle track that shows a generic warning before scenes you
 choose. It never changes the video or original subtitles, and it cannot
 guarantee every warning is present.
 
-[Try the no-account example](#try-it-in-two-minutes) ·
-[Use a movie and optional data sources](#use-it-with-your-video) ·
+**Two free accounts do the work for you.** DoesTheDogDie supplies the
+timestamps, OpenSubtitles supplies the dialogue track, and one setup command
+stores both. After that it is one command per film. You can also write your own
+timestamps and skip both accounts.
+
+[Install](#install) ·
+[Set up the two sources](#set-up-the-two-sources) ·
+[Make a track for a film](#make-a-warning-track-for-a-film) ·
 [Safety limits](#safety-limits) ·
 [For coding agents](#use-it-with-a-coding-agent)
 
@@ -21,13 +27,7 @@ guarantee every warning is present.
 > against the copy you plan to watch: missing data, a different edition or a
 > playback fault can all leave a warning out.
 
-## Try it in two minutes
-
-No account, no API key, no network call, no FFmpeg. The repository ships two
-small synthetic files, so you can see the real output before deciding whether
-the tool is for you.
-
-### 1. Install
+## Install
 
 ```sh
 git clone https://github.com/alexfur/trigger-warnings.git
@@ -36,31 +36,8 @@ python3 -m venv .venv
 .venv/bin/python -m pip install .
 ```
 
-Python 3.9 or newer is required. There are no runtime dependencies.
-
-### 2. Make a warning track
-
-```sh
-.venv/bin/trigger-warnings --subtitles examples/dialogue.srt \
-  --events examples/events.json --output example.warned.ass
-```
-
-The tool reports what it selected and names the file it created. `example.warned.ass`
-is new, and neither example file is touched.
-
-<p align="center">
-  <img src="assets/terminal.svg" width="640"
-       alt="A terminal card. The command runs trigger-warnings against the bundled example files and the tool reports three dialogue cues kept, two warning windows, one event with no end time, and the file it wrote.">
-</p>
-
-### 3. Look at what it wrote
-
-Open `example.warned.ass` in any text editor. The warning cues carry the
-generic text `TRIGGER INCOMING` and never name the category, so the file itself
-does not spoil the scene. The original dialogue lines sit alongside them.
-
-That is the whole product. Everything below is about pointing it at a real
-video.
+Python 3.9 or newer is required. There are no runtime dependencies. FFmpeg is
+needed only to read a subtitle track out of a video file or to render a preview.
 
 <details>
 <summary>Install without a virtual environment, or after the first release</summary>
@@ -79,14 +56,142 @@ install above.
 
 </details>
 
-## Use it with your video
+### Check the install, without an account
 
-Three steps. Nothing here needs an account either, as long as you supply the
-timestamps yourself.
+Thirty seconds, no key and no network. The repository ships two small synthetic
+files:
 
-### 1. Write the times you want warning about
+```sh
+.venv/bin/trigger-warnings --subtitles examples/dialogue.srt \
+  --events examples/events.json --output example.warned.ass
+```
 
-Create `events.json`:
+The tool reports what it selected and names the file it created.
+`example.warned.ass` is new, and neither example file is touched. Open it in a
+text editor: the warning cues carry the generic text `TRIGGER INCOMING` and
+never name the category, so the file itself does not spoil the scene.
+
+<p align="center">
+  <img src="assets/terminal.svg" width="640"
+       alt="A terminal card. The command runs trigger-warnings against the bundled example files and the tool reports three dialogue cues kept, two warning windows, one event with no end time, and the file it wrote.">
+</p>
+
+## Set up the two sources
+
+Do this once. It takes about five minutes, most of which is registering.
+
+| Source | Gives you | Needs |
+| --- | --- | --- |
+| [DoesTheDogDie](https://www.doesthedogdie.com/api) | Community timestamps for a film, by category | A free API key |
+| [OpenSubtitles](https://www.opensubtitles.com/en/consumers) | The film's dialogue track as an `.srt` | A free account, plus an API key from it |
+
+Sign in to your OpenSubtitles account **before** opening its API consumer page.
+Logged-out visitors are redirected to sign-in.
+
+Then run this in your own terminal:
+
+```sh
+trigger-warnings --setup
+```
+
+It checks Python, FFmpeg and each account, then says what is missing and what
+that stops you doing. Answer `Y` at `Set this up now? [Y/n]` to enter a value,
+or press Enter to skip it. Secrets are typed into a hidden prompt, proved
+against the service, and only then stored in the operating system keychain.
+Nothing is ever written to a file.
+
+Go straight to entering values with `trigger-warnings --setup --save`. An
+exported environment variable always wins over a stored value.
+
+You do not need OpenSubtitles if your video file already carries a subtitle
+track, and you do not need either account if you write your own timestamps.
+
+## Make a warning track for a film
+
+Five commands. This example uses *Jaws* (1975).
+
+### 1. Find the film on DoesTheDogDie
+
+```sh
+trigger-warnings --ddd-search 'Jaws' --ddd-year 1975
+```
+
+It prints candidate rows with an ID and selects nothing. Pick the one that
+matches the copy you are going to watch. An empty list means nothing matched
+the query, not that the film is absent from the service.
+
+### 2. Get the dialogue track
+
+Skip this step if your video already carries a subtitle track: pass
+`--video jaws.mkv` instead of `--subtitles` in the steps below, and FFmpeg will
+read it out.
+
+```sh
+trigger-warnings --os-search 'Jaws' --os-year 1975
+```
+
+It prints candidates with a file ID and selects nothing. Narrow a series with
+`--os-season` and `--os-episode`.
+
+```sh
+trigger-warnings --os-file 4610837 --output jaws.srt
+```
+
+This writes `jaws.srt`, and dialogue is all it contains: no warnings yet. The
+download signs in, so it needs your username and password as well as the key.
+It spends part of a small daily allowance, so the tool asks once and never
+retries a failure.
+
+### 3. See which categories the film has
+
+```sh
+trigger-warnings --dry-run --subtitles jaws.srt --ddd-item 10154 \
+  --output jaws.warned.ass
+```
+
+This lists the categories with timestamps and the warning windows it would
+produce, then stops. It writes nothing.
+
+### 4. Write the track for the categories you want
+
+```sh
+trigger-warnings --subtitles jaws.srt --ddd-item 10154 \
+  --category 'a dog dies' --output jaws.warned.ass \
+  --provenance jaws.provenance.json
+```
+
+Repeat `--category` for several. Omitting it selects every category, which is
+rarely what you want. The tool names each file it created. It never overwrites
+anything, and a failed run rolls back what it made.
+
+### 5. Load it, then check a known warning
+
+- **VLC**: Subtitle, then Add Subtitle File.
+- **mpv**: `mpv jaws.mkv --sub-file=jaws.warned.ass`
+
+Seek to a time you already know about and confirm the banner appears about
+twenty seconds ahead of it. Do that once near the start and once near the end,
+because a track that drifts is worse than no track. Use `--offset` to correct a
+known constant shift.
+
+<p align="center">
+  <img src="assets/preview.png" width="640"
+       alt="A rendered video frame. The generic TRIGGER INCOMING banner sits at the top and the unchanged dialogue line sits at the bottom, so the warning never covers the dialogue.">
+</p>
+
+<p align="center"><em>A frame rendered by the tool's own <code>--verify</code> option, from the synthetic demo video. It shows that the banner and the dialogue can share a frame. It does not prove that any player positions them this way.</em></p>
+
+**About the data.** DoesTheDogDie timestamps are community-supplied and
+incomplete, and they may not match your edition. A film with no timestamped
+entries is not evidence that it contains nothing. Keep the
+`Powered by DoesTheDogDie.com` attribution and read the
+[API terms](https://www.doesthedogdie.com/api/terms); Scene Alerts need a
+separate written agreement. Keep the `Subtitles from OpenSubtitles.com`
+attribution and read the [OpenSubtitles terms](https://www.opensubtitles.com/en/terms).
+
+## Bring your own timestamps
+
+No account needed. Create `events.json`:
 
 ```json
 [
@@ -97,131 +202,14 @@ Create `events.json`:
 
 `start` is required and takes seconds or `HH:MM:SS.mmm`. `end` is optional.
 Where it is absent the banner stops at the event start, which is not a safe
-time to resume playback. To draw the times from a service instead, see
-[Get data from supported sources](#get-data-from-supported-sources).
+time to resume playback.
 
-### 2. Plan the run
-
-```sh
-.venv/bin/trigger-warnings --dry-run --video movie.mkv \
-  --events events.json --output movie.warned.ass
-```
-
-This lists the categories it found and the warning windows it would produce,
-then stops. It writes nothing. Use `--category 'loud noises'` to keep one
-category and leave the rest out; repeat the flag for several.
-
-Reading the subtitle track out of `movie.mkv` needs FFmpeg. Pass your own
-`--subtitles dialogue.srt` instead and FFmpeg is not involved.
-
-### 3. Write the track, then check it in your player
+Then pass `--events` where the steps above pass `--ddd-item`:
 
 ```sh
-.venv/bin/trigger-warnings --video movie.mkv --events events.json \
-  --category 'loud noises' --output movie.warned.ass
+trigger-warnings --subtitles jaws.srt --events events.json \
+  --category 'loud noises' --output jaws.warned.ass
 ```
-
-The tool names the file it created. Load it as an extra subtitle track:
-
-- **VLC**: Subtitle, then Add Subtitle File.
-- **mpv**: `mpv movie.mkv --sub-file=movie.warned.ass`
-
-Then seek to a time you already know about and confirm the banner appears
-about twenty seconds ahead of it. Do that once near the start and once near the
-end, because a track that drifts is worse than no track.
-
-<p align="center">
-  <img src="assets/preview.png" width="640"
-       alt="A rendered video frame. The generic TRIGGER INCOMING banner sits at the top and the unchanged dialogue line sits at the bottom, so the warning never covers the dialogue.">
-</p>
-
-<p align="center"><em>A frame rendered by the tool's own <code>--verify</code> option, from the synthetic demo video. It shows that the banner and the dialogue can share a frame. It does not prove that any player positions them this way.</em></p>
-
-## Get data from supported sources
-
-Optional. Skip all of this if you write your own timestamps.
-
-Two services can save you work: DoesTheDogDie supplies community timestamps,
-and OpenSubtitles supplies a dialogue track. Both need your own free account,
-and both are the reason the tool has a setup step at all.
-
-<details>
-<summary>Set up credentials with the wizard</summary>
-
-Run this in your own terminal:
-
-```sh
-trigger-warnings --setup
-```
-
-It checks Python, FFmpeg and each optional account, then says what is missing
-and what that stops you doing. Answer `Y` at `Set this up now? [Y/n]` to enter
-a value, or press Enter to skip it. Secrets are typed into a hidden prompt,
-proved against the service, and only then stored in the operating system
-keychain. Nothing is ever written to a file.
-
-Go straight to entering values with:
-
-```sh
-trigger-warnings --setup --save
-```
-
-An exported environment variable always wins over a stored value. For
-OpenSubtitles, sign in to your account before opening the
-[API consumer page](https://www.opensubtitles.com/en/consumers), because
-logged-out visitors are redirected to sign-in.
-
-</details>
-
-<details>
-<summary>Get timestamps from DoesTheDogDie</summary>
-
-Needs `DDD_API_KEY`. Find the title first. The search selects nothing.
-
-```sh
-trigger-warnings --ddd-search 'Jaws' --ddd-year 1975
-```
-
-It prints candidate rows with an ID. Pass the ID you recognise as your edition
-in place of `--events`:
-
-```sh
-trigger-warnings --dry-run --video movie.mkv --ddd-item 10154
-trigger-warnings --video movie.mkv --ddd-item 10154 \
-  --category 'a dog dies' --output movie.warned.ass
-```
-
-Timestamps there are community-supplied and incomplete. A title with no
-timestamped entries is not evidence that it contains nothing. Keep the
-`Powered by DoesTheDogDie.com` attribution and read the
-[API terms](https://www.doesthedogdie.com/api/terms). Scene Alerts need a
-separate written agreement.
-
-</details>
-
-<details>
-<summary>Get a dialogue track from OpenSubtitles</summary>
-
-Search needs the API key. Download also signs in, so it needs the username and
-password too. Neither has a command-line flag, by design.
-
-```sh
-trigger-warnings --os-search 'Jaws' --os-year 1975
-```
-
-It prints candidates with a file ID, and selects nothing. Download the one you
-picked into a new file:
-
-```sh
-trigger-warnings --os-file 4610837 --output dialogue.srt
-```
-
-A download spends part of a small daily allowance, so the tool asks once and
-never retries. What arrives is dialogue only. Pass it to `--subtitles` to add
-warnings. Keep the `Subtitles from OpenSubtitles.com` attribution and read the
-[OpenSubtitles terms](https://www.opensubtitles.com/en/terms).
-
-</details>
 
 ## Use it with a coding agent
 
@@ -248,10 +236,15 @@ Read `trigger-warnings --help` first, on its own.
    this chat, never ask me to read one out, and never ask me to export or copy one
    into your session. There is nothing you can do with a credential that I cannot
    do by running setup myself.
-2. Find the title with `--ddd-search` and show me the candidates. Never choose one.
-3. With the ID I choose, run `--dry-run` without `--category`, show me the
+2. Ask where the dialogue track comes from: a file I already have, a subtitle
+   stream inside my video (`--video`), or OpenSubtitles. For OpenSubtitles, run
+   `--os-search`, show me the candidates and never choose one. Download only the
+   file id I name, with `--os-file`, and only once: a download spends part of a
+   small daily allowance, so do not retry a failure without asking me.
+3. Find the title with `--ddd-search` and show me the candidates. Never choose one.
+4. With the ID I choose, run `--dry-run` without `--category`, show me the
    categories and stop.
-4. Generate only the categories I name, using a new `--output` and a
+5. Generate only the categories I name, using a new `--output` and a
    `--provenance` sidecar. Never invent a timestamp and never overwrite a file.
 
 Use `--json` for every run except `--help` and `--version`. Branch on `ok`, never on

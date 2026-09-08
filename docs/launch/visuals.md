@@ -54,7 +54,7 @@ in the clip.
 | --- | --- |
 | What it shows | One frame rendered by the tool's own `--verify` option: the warning banner at the top and the original dialogue at the bottom, at the same moment. |
 | Source | `trigger-warnings --video <demo> --events examples/events.json --output <track> --verify <png>` |
-| Placement | README, in the `Use it with your video` section. Product Hunt gallery, third item. |
+| Placement | README, at the end of `Make a warning track for a film`. Product Hunt gallery, third item. |
 | Dimensions | 960 x 540, 28 KB |
 | Alt text | `A rendered video frame. The generic TRIGGER INCOMING banner sits at the top and the unchanged dialogue line sits at the bottom, so the warning never covers the dialogue.` |
 | Regenerate | `python3 scripts/make_visuals.py` |
@@ -70,7 +70,7 @@ differently.
 | --- | --- |
 | What it shows | A terminal card carrying the no-account command and the report the tool printed in response, verbatim. |
 | Source | The documented first-run command, captured by `scripts/make_visuals.py` inside a copy of `examples/`, so every path in it is relative. |
-| Placement | README, in `Try it in two minutes`. Product Hunt gallery, fourth item. |
+| Placement | README, in `Check the install, without an account`. Product Hunt gallery, fourth item. |
 | Dimensions | 640 x 366, 3 KB |
 | Alt text | `A terminal card. The command runs trigger-warnings against the bundled example files and the tool reports three dialogue cues kept, two warning windows, one event with no end time, and the file it wrote.` |
 | Regenerate | `python3 scripts/make_visuals.py` |
