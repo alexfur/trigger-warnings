@@ -181,6 +181,17 @@ result before watching, and treat every timestamp as a model candidate rather
 than a verified fact. `--dry-run` still performs the scan but publishes no
 files.
 
+To use the trigger labels already returned for a DoesTheDogDie item, let DDD
+provide the checklist while the model provides all timestamps:
+
+```sh
+trigger-warnings --video jaws.mkv --ddd-item 10154 \
+  --model-from-ddd --subtitles jaws.srt --output jaws.model-warnings.ass
+```
+
+This deliberately fetches DDD labels, not its timestamps. Add repeated
+`--category` flags to restrict which DDD labels are checked.
+
 ### 4. Write the track for the categories you want
 
 ```sh

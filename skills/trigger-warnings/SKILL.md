@@ -111,6 +111,13 @@ scan with no candidates refuses to write a subtitle rather than implying an
 all-clear. Surface every model note in the result and ask the user to inspect
 the generated track.
 
+To reuse the labels from a selected DoesTheDogDie item while replacing its
+timestamps with local model results, pass `--ddd-item` and
+`--model-from-ddd` (plus `--video`). This fetches DDD's trigger labels only;
+the DDD timestamps are deliberately ignored. Repeat `--category` to narrow the
+labels sent to the model. Continue to surface the DDD attribution and the
+model's sampling caveats.
+
 ### The official API source
 
 Permitted only with the user's own key and a tier that grants access. Prefer the

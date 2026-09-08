@@ -294,6 +294,10 @@ def build_parser():
              "several; requires --video and replaces --events/--ddd-item",
     )
     parser.add_argument(
+        "--model-from-ddd", action="store_true",
+        help="use the selected DoesTheDogDie item's trigger labels as the model checklist",
+    )
+    parser.add_argument(
         "--model", metavar="NAME_OR_PATH",
         help="local MLX-VLM model name or path for --model-trigger",
     )
@@ -732,13 +736,13 @@ def _load_ddd_events(args, report):
     return source
 
 
-def _load_model_events(args, report):
+def _load_model_events(args, report, triggers=None):
     """Run the explicitly requested local model and return provider-neutral events."""
     from . import vision
 
     scan = vision.scan_video(
         args.video,
-        args.model_trigger,
+        args.model_trigger if triggers is None else triggers,
         model=args.model or vision.DEFAULT_MODEL,
         revision=args.model_revision,
         fps=args.model_fps,
@@ -758,6 +762,34 @@ def _load_model_events(args, report):
     for note in scan.notes:
         report(note)
     return scan
+
+
+def _ddd_trigger_labels(source, requested):
+    """Return unique DDD labels for model checking, optionally category-filtered."""
+    labels = []
+    seen = set()
+    for event in source.events:
+        label = event.label.strip()
+        key = label.casefold()
+        if key not in seen:
+            seen.add(key)
+            labels.append(label)
+    if requested:
+        wanted = {value.strip().casefold() for value in requested}
+        unknown = sorted(wanted - {label.casefold() for label in labels})
+        if unknown:
+            raise TriggerWarningsError(
+                "no DoesTheDogDie model trigger uses category {}; known categories: {}".format(
+                    ", ".join(unknown), ", ".join(labels)
+                )
+            )
+        labels = [label for label in labels if label.casefold() in wanted]
+    if not labels:
+        raise TriggerWarningsError(
+            "DoesTheDogDie returned no timestamped trigger labels to check; "
+            "choose --model-trigger values explicitly instead"
+        )
+    return labels
 
 
 def _search_ddd_items(args, report):
@@ -1009,6 +1041,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--ddd-year", args.ddd_year, None),
         ("--ddd-api-key", args.ddd_api_key, None),
         ("--model-trigger", args.model_trigger, []),
+        ("--model-from-ddd", args.model_from_ddd, False),
         ("--model", args.model, None),
         ("--model-revision", args.model_revision, None),
         ("--model-fps", args.model_fps, 1.0),
@@ -1346,6 +1379,7 @@ def run(args, report, result=None, setup_prompter=None):
                             ("--ddd-api-key", args.ddd_api_key),
                             ("--ddd-search", args.ddd_search),
                             ("--ddd-year", args.ddd_year),
+                            ("--model-from-ddd", args.model_from_ddd),
                             ("--provenance", args.provenance),
                             ("--os-search", args.os_search),
                             ("--os-file", args.os_file),
@@ -1431,29 +1465,36 @@ def run(args, report, result=None, setup_prompter=None):
 
     if args.output is None and not args.dry_run:
         raise TriggerWarningsError("--output is required")
+    model_requested = bool(args.model_trigger or args.model_from_ddd)
     source_modes = sum(bool(value) for value in (
-        args.events is not None, args.ddd_item is not None, bool(args.model_trigger)
+        args.events is not None,
+        args.ddd_item is not None and not args.model_from_ddd,
+        model_requested,
     ))
     if source_modes == 0:
         raise TriggerWarningsError(
-            "supply --events, --ddd-item with an API key, or one or more --model-trigger values"
+            "supply --events, --ddd-item with an API key, or a model trigger source"
         )
     if source_modes > 1:
         raise TriggerWarningsError(
-            "--events, --ddd-item and --model-trigger are mutually exclusive"
+            "--events, --ddd-item and model trigger sources are mutually exclusive"
         )
-    if args.model_trigger and args.video is None:
-        raise TriggerWarningsError("--model-trigger needs --video")
+    if model_requested and args.video is None:
+        raise TriggerWarningsError("model trigger scanning needs --video")
+    if args.model_trigger and args.model_from_ddd:
+        raise TriggerWarningsError("--model-trigger and --model-from-ddd are mutually exclusive")
     if args.model_trigger and args.category:
         raise TriggerWarningsError(
             "--category cannot be combined with --model-trigger; list the requested "
             "triggers with repeated --model-trigger flags"
         )
+    if args.model_from_ddd and args.ddd_item is None:
+        raise TriggerWarningsError("--model-from-ddd needs --ddd-item")
     if args.ddd_item is None and args.ddd_api_key is not None:
         raise TriggerWarningsError(
             "--ddd-api-key needs --ddd-item or --ddd-search"
         )
-    if not args.model_trigger:
+    if not model_requested:
         for flag, value, default in (
             ("--model", args.model, None),
             ("--model-revision", args.model_revision, None),
@@ -1501,7 +1542,18 @@ def run(args, report, result=None, setup_prompter=None):
 
     ddd_source = None
     model_source = None
-    if args.ddd_item is not None:
+    if args.model_from_ddd:
+        ddd_source = _load_ddd_events(args, report)
+        model_triggers = _ddd_trigger_labels(ddd_source, args.category)
+        model_source = _load_model_events(args, report, model_triggers)
+        events = core.load_events(json.dumps(model_source.events), "local model scan")
+        model_source.metadata["triggerSource"] = {
+            "kind": "does-the-dog-die-labels",
+            "itemId": args.ddd_item,
+            "attribution": "Powered by DoesTheDogDie.com",
+            "labels": model_triggers,
+        }
+    elif args.ddd_item is not None:
         ddd_source = _load_ddd_events(args, report)
         events = ddd_source.events
     elif args.model_trigger:
@@ -1530,7 +1582,7 @@ def run(args, report, result=None, setup_prompter=None):
     source = _source_metadata(args, model_source or ddd_source)
 
     result.update({
-        "mode": "dry-run" if args.dry_run else ("model-scan" if args.model_trigger else "generate"),
+        "mode": "dry-run" if args.dry_run else ("model-scan" if model_requested else "generate"),
         "source": source,
         # The three named targets are reported whether or not they were asked
         # for, so a caller reads one shape in every mode. ``filesWritten`` is
