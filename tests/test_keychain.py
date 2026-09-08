@@ -136,8 +136,12 @@ class HydrateTests(unittest.TestCase):
 
     def test_without_a_backend_the_environment_is_untouched(self):
         environ = {}
-        sources = keychain.hydrate(environ=environ, store=None,
-                                   variables=("DDD_API_KEY",))
+        # None requests backend discovery; isolate it from the real keychain.
+        with mock.patch.object(keychain, "backend", return_value=None), \
+                mock.patch.object(keychain, "get") as get:
+            sources = keychain.hydrate(environ=environ, store=None,
+                                       variables=("DDD_API_KEY",))
+        get.assert_not_called()
         self.assertEqual({}, environ)
         self.assertEqual({}, sources)
 
