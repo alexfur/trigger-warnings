@@ -102,14 +102,6 @@ timestamps:
   --subtitles movie.srt --output movie.model-warnings.ass
 ```
 
-To use DDD timestamps directly instead:
-
-```sh
-.venv/bin/trigger-warnings \
-  --subtitles movie.srt --ddd-item ITEM_ID \
-  --category 'eye mutilation' --output movie.warnings.ass
-```
-
 Find an item ID first with `--ddd-search TITLE --ddd-year YEAR`. The search
 only lists candidates; it does not choose one for you. DDD access requires your
 own API key. Prefer `DDD_API_KEY` over `--ddd-api-key`, which is visible in
