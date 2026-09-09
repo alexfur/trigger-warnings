@@ -43,6 +43,18 @@ Face on first use. Choose another MLX-VLM model with `--model`:
   --model-trigger 'blood' --output movie.warnings.ass
 ```
 
+For a smaller and faster model, use SmolVLM2 explicitly:
+
+```sh
+.venv/bin/trigger-warnings --video movie.mkv \
+  --model 'mlx-community/SmolVLM2-500M-Video-Instruct-mlx' \
+  --model-trigger 'blood' --output movie.warnings.ass
+```
+
+SmolVLM2 uses less memory and was the model used for the repository's initial
+throughput benchmark. Qwen is the stronger default, but both are candidate
+generators and need the same review.
+
 Useful tuning flags are `--model-fps` (default `1`), `--model-chunk` (default
 `10` seconds), `--model-width` (default `384` pixels), and
 `--model-max-tokens` (default `16`). `--model-revision` pins a model revision.
