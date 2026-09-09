@@ -1,103 +1,103 @@
 # Release
 
-How the package reaches PyPI, and which parts only the repository owner can
-do. Nothing in this file has been performed. No package has been submitted to
-PyPI or TestPyPI.
+The first public candidate is `0.4.0a1`. Source installation remains available
+until the package has been published and verified on PyPI.
 
-## What is already true
+## One-time account setup
 
-| Fact | Evidence |
+On both [PyPI](https://pypi.org/manage/account/publishing/) and
+[TestPyPI](https://test.pypi.org/manage/account/publishing/), the account owner
+adds a pending GitHub publisher:
+
+| Setting | Value |
 | --- | --- |
-| The build works | `python -m build` produces `trigger_warnings-0.3.0.tar.gz` and `trigger_warnings-0.3.0-py3-none-any.whl`. |
-| The metadata is valid | `python -m twine check dist/*` reports `PASSED` for both. |
-| The wheel installs and runs | A new virtual environment plus `pip install dist/*.whl` gives a working `trigger-warnings` that completes the no-account command. |
-| The sdist is complete | It carries the package, `examples/`, `assets/`, `scripts/`, `skills/`, `tests/` and every top-level document. |
-| The name looks free | `https://pypi.org/pypi/trigger-warnings/json` answers `404`, so no project of that name is registered. The owner still confirms this at publish time. |
-| Publishing is least privilege | `.github/workflows/release.yml` grants no permission by default. The publish job takes `contents: read` and `id-token: write` and nothing else, and the checkout does not persist credentials. |
-| Only a version tag publishes | The workflow triggers on `v*.*.*`. A tag without two dots is ignored. |
+| Project | `trigger-warnings` |
+| Owner | `alexfur` |
+| Repository | `trigger-warnings` |
+| Workflow | `release.yml` |
+| Environment | `pypi` for PyPI; `testpypi` for TestPyPI |
 
-## Version and tag convention
+The matching GitHub environments must exist. Publishing uses short-lived
+OpenID Connect credentials; no permanent PyPI API token is needed.
 
-The tag is `v` followed by the version in `pyproject.toml`, for example
-`v0.3.0`. The two must match. The workflow does not check that, so the owner
-checks it before tagging.
+A private repository can publish a package. Its distributed source becomes
+public, while GitHub links remain inaccessible to non-collaborators until
+the repository owner makes the repository public separately.
 
-The current source version is `0.3.0` and has deliberately not been changed.
-If the first public release should carry a different number, bump
-`pyproject.toml` and `CHANGELOG.md` in a separate reviewed change first.
+## Prepare and stage
 
-## Owner steps, in order
+1. Update `pyproject.toml`, `trigger_warnings/__init__.py` and
+   `CHANGELOG.md` together.
+2. Run the unit tests, build the sdist and wheel, and check their metadata:
 
-Every step here needs the repository owner. An implementation agent must not
-perform any of them.
-
-1. **Confirm the PyPI name.** Sign in to PyPI and check that
-   `trigger-warnings` is available to you.
-2. **Configure trusted publishing.** On PyPI, add a pending publisher for the
-   project:
-   - Owner: `alexfur`
-   - Repository: `trigger-warnings`
-   - Workflow: `release.yml`
-   - Environment: `pypi`
-3. **Create the GitHub environment.** In repository settings, add an
-   environment named `pypi`. Add a required reviewer if you want a manual gate
-   before any publish.
-4. **Make the repository public.** The release workflow works either way, but
-   the launch needs it.
-5. **Confirm the version.** `pyproject.toml` and the `CHANGELOG.md` heading
-   agree, and the working tree is clean.
-6. **Move the changelog entry.** Rename `## Unreleased` to the version and
-   date being released.
-7. **Tag and push.**
-   ```sh
-   git tag -a v0.3.0 -m "0.3.0"
-   git push origin v0.3.0
+   ```bash
+   python -m unittest discover -s tests -v
+   python -m pip install build twine
+   python -m build
+   python -m twine check dist/*
    ```
-8. **Watch the workflow.** The Actions tab shows the `Publish to PyPI` run. It
-   builds, runs `twine check`, then publishes through OpenID Connect. No PyPI
-   token is stored anywhere.
-9. **Create the GitHub release.** Point it at the tag and paste the changelog
-   section.
-10. **Confirm the result.** Visit `https://pypi.org/project/trigger-warnings/`,
-    then in a clean environment:
-    ```sh
-    pipx install trigger-warnings
-    trigger-warnings --version
-    ```
 
-## After the release
+3. Install the wheel in a clean environment outside the checkout. Check the
+   CLI with the synthetic examples. On Apple Silicon, install the wheel's
+   `[vision]` extra and run `scripts/smoke_vision.py` with that environment's
+   Python. This test downloads the default model if necessary.
+4. Commit and push with the repository's approved Git workflow. Create a
+   version tag matching both declarations, such as `v0.4.0a1`.
 
-Update the README's `After the first release` note once the PyPI page exists,
-so the install command is no longer labelled as unavailable.
+A matching tag starts `release.yml`. The workflow first runs the reusable
+test workflow: unit tests on Ubuntu and macOS, a clean base-wheel install,
+and the optional vision dependency install on an Apple Silicon runner.
+The hosted vision check tests imports and synthetic provider behaviour;
+real model inference is checked separately on a local Mac.
 
-## Supported installation commands
+Only after those jobs pass does publishing run. It checks that the tag matches
+both version declarations, builds the distributions, runs `twine check`,
+tests the built wheel outside the checkout, and uploads to TestPyPI.
 
-| Audience | Command | Notes |
-| --- | --- | --- |
-| Someone who wants the command | `pipx install trigger-warnings` | Only after the first release. Gives an isolated install and the `trigger-warnings` command on PATH. |
-| Someone without pipx | `python3 -m pip install --user trigger-warnings` | Same package. Also only after the first release. |
-| A contributor, or anyone who wants the example files | `git clone` then `pip install .` in a virtual environment | This is the README's primary path, and the only one that includes `examples/`. |
+## Verify and promote
 
-The bundled example fixtures ship in the sdist but not in the wheel, so a
-`pipx` install gives the command without `examples/dialogue.srt`. That is why
-the README leads with the source install rather than PyPI, and it is not worth
-moving the fixtures into the package to change.
+Install the staged alpha in a fresh environment:
 
-## Known limitations to accept or fix
+```bash
+python -m pip install --index-url https://test.pypi.org/simple/ \
+  --no-deps 'trigger-warnings==0.4.0a1'
+trigger-warnings --version
+```
 
-| Limitation | Effect | Options |
-| --- | --- | --- |
-| The README uses relative image paths. | GitHub renders them. The PyPI long description will not, so the project page shows broken images. | Accept it, or after the repository is public switch the four `<img src>` values to `https://raw.githubusercontent.com/alexfur/trigger-warnings/main/assets/...`. That is an owner decision because it only works once the repository is public. |
-| `pypa/gh-action-pypi-publish@release/v1` is a moving ref. | The action can change under the workflow. | It is the ref PyPA documents and supports. Pinning to a commit SHA is stricter but has to be reviewed and updated by hand. |
-| `Development Status :: 3 - Alpha`. | Sets expectations low on the PyPI page. | Accurate today. Revisit after the first round of external reports. |
+The base package has no runtime dependencies, so `--no-deps` isolates this
+check from TestPyPI's unrelated packages. Test model dependencies against
+regular PyPI separately.
 
-## If a publish fails
+After verification, dispatch the release workflow on the same tag:
 
-- **`Trusted publishing exchange failure`**: the pending publisher on PyPI does
-  not match the repository, workflow filename or environment. Fix it on PyPI
-  and re-run the job. Do not add an API token as a workaround.
-- **The version already exists**: PyPI never accepts a re-upload of the same
-  version. Bump the version, tag again, and publish that.
-- **`twine check` fails in the workflow**: the metadata or README changed since
-  the last local check. Reproduce with `python -m build && python -m twine
-  check dist/*` before tagging again.
+```bash
+gh workflow run release.yml --ref v0.4.0a1 -f target=pypi
+```
+
+The production run repeats the required checks, downloads the staged sdist
+and wheel from TestPyPI, verifies their published SHA-256 hashes and checks
+the wheel again. It uploads those same distributions to PyPI without
+rebuilding them.
+
+Verify the production install before announcing the release:
+
+```bash
+python -m pip install 'trigger-warnings==0.4.0a1'
+trigger-warnings --version
+```
+
+For local scanning on Apple Silicon, install
+`trigger-warnings[vision]==0.4.0a1`. Update the README's install instructions
+only after this succeeds.
+
+## Failed releases
+
+- A Trusted Publishing error usually means an account-side publisher is absent
+  or does not match the repository, workflow or environment. Correct the
+  publisher and rerun; do not paste a token into the workflow.
+- A branch dispatch fails the tag check. Select a version tag.
+- A tag/version mismatch requires correcting the version or tag before publishing.
+- PyPI does not allow replacing a published file. If code changes after
+  staging, increment the version and use a new tag.
+- An inference failure must be investigated before promoting a model release.
+  Passing the base suite does not establish model-detection accuracy.

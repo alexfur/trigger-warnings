@@ -1,5 +1,9 @@
 name: Tests
-on: [push, pull_request]
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -29,3 +33,26 @@ jobs:
       - run: python -m pip install --upgrade build twine
       - run: python -m build
       - run: twine check dist/*
+      - name: Install the built wheel outside the checkout
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-check"
+          "$RUNNER_TEMP/wheel-check/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-check/bin/trigger-warnings" --version
+          "$RUNNER_TEMP/wheel-check/bin/trigger-warnings" \
+            --subtitles "$GITHUB_WORKSPACE/examples/dialogue.srt" \
+            --events "$GITHUB_WORKSPACE/examples/events.json" \
+            --output "$RUNNER_TEMP/wheel-example.ass"
+  vision-install:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install '.[vision]'
+      - run: python -m pip check
+      - name: Check optional imports (no model download or GPU required)
+        run: python -c 'from mlx_vlm import load, generate; from mlx_vlm.prompt_utils import apply_chat_template; from PIL import Image'
+      - run: python -m unittest discover -s tests -p test_vision.py -v

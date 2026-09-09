@@ -5,4 +5,4 @@ The public surface is the command line. See the README for the contract.
 
 __all__ = ["__version__"]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0a1"

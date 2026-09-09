@@ -1379,7 +1379,6 @@ def run(args, report, result=None, setup_prompter=None):
                             ("--ddd-api-key", args.ddd_api_key),
                             ("--ddd-search", args.ddd_search),
                             ("--ddd-year", args.ddd_year),
-                            ("--model-from-ddd", args.model_from_ddd),
                             ("--provenance", args.provenance),
                             ("--os-search", args.os_search),
                             ("--os-file", args.os_file),
@@ -1393,11 +1392,13 @@ def run(args, report, result=None, setup_prompter=None):
                     "{}".format(flag)
                 )
         for flag, value in (("--model-trigger", args.model_trigger),
+                            ("--model-from-ddd", args.model_from_ddd),
                             ("--model", args.model), ("--model-revision", args.model_revision),
                             ("--model-fps", args.model_fps), ("--model-chunk", args.model_chunk),
                             ("--model-width", args.model_width), ("--model-max-tokens", args.model_max_tokens)):
             default = {"--model-fps": 1.0, "--model-chunk": 10.0,
-                       "--model-width": 384, "--model-max-tokens": 16}.get(flag)
+                       "--model-width": 384, "--model-max-tokens": 16,
+                       "--model-trigger": [], "--model-from-ddd": False}.get(flag)
             if value is not None and _was_supplied(args, flag, value, default):
                 raise TriggerWarningsError(
                     "--list-streams does not generate output; run it without {}".format(flag)

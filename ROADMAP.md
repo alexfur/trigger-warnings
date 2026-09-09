@@ -5,6 +5,8 @@ decided, and a request in an issue is the way to change that.
 
 ## Planned
 
+- **Evaluate local model detections** against labelled, appropriately licensed
+  clips. The current model mode produces candidate timestamps for review.
 - **A worked example for a real film**, using timestamps a person wrote
   themselves, so the second run is as clear as the first.
 - **Better reporting of a category with no timestamped entries**, so "the
@@ -22,9 +24,6 @@ decided, and a request in an issue is the way to change that.
 
 ## Not planned
 
-- **Scene detection.** The tool formats timestamps. It does not look at a
-  video and decide what is in it, and adding that would turn a predictable
-  tool into an unreliable one.
 - **A safety rating, score or all-clear.** Absence of a warning is not
   evidence of absence.
 - **Editing, cutting or skipping video.** The output is a subtitle track and

@@ -2,10 +2,17 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## 0.4.0a1
+
+First public alpha candidate. Model detections remain experimental.
 
 ### Added
 
+- Opt-in local video scanning with SmolVLM2 by default and `--model` overrides.
+- `--model-from-ddd` to scan using labels from DDD timestamped ratings.
+- Synthetic tests for model answers, candidate windows, CLI output and failures.
+- A clean installation check for the vision extra and staged TestPyPI releases.
+- An opt-in installed-model smoke test: `scripts/smoke_vision.py`.
 - An optional terminal setup wizard that validates credentials before storing
   them in the operating system keychain.
 - Continuous integration for Python 3.9 through 3.13 on Ubuntu and macOS.
@@ -20,16 +27,19 @@ All notable changes to this project are documented here.
 
 ### Changed
 
-- The README leads with the outcome, then with the path most people will
-  take: the first screen names DoesTheDogDie and OpenSubtitles, and
-  `Make a warning track for a film` walks that path in five commands. The
-  bundled no-account example is still there, as an install check rather than
-  the destination, so a credential still blocks nothing.
+- The README separates local model scanning, DDD timestamps and supplied
+  events, with installation and playback instructions for each route.
 - A missing FFmpeg now names FFmpeg, not just `ffprobe`, and points at the
   subtitle-only route that needs neither.
 - The package summary is the launch tagline.
-- The release workflow grants no permission by default, publishes only on a
-  `vX.Y.Z` tag and runs `twine check` before uploading.
+- Publishing waits for tests, base-wheel installation and vision dependency
+  checks. Tags must match both package version declarations. Tags stage on
+  TestPyPI; an explicit dispatch promotes the same files to PyPI.
+
+### Fixed
+
+- `--list-streams` no longer rejects unused model options.
+- Duplicate model triggers are detected after trimming whitespace.
 
 ## 0.3.0
 

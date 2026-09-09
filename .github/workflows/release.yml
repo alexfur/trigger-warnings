@@ -1,22 +1,35 @@
 name: Publish to PyPI
 
-# Only a vX.Y.Z tag publishes. Anything without two dots is ignored, so a
-# branch tag or a scratch tag cannot reach PyPI.
+# Tags stage on TestPyPI. Production publication is an explicit dispatch.
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Package index
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+        required: true
 
-# No job gets a token unless it asks. The publish job below asks for the two
-# permissions it needs and nothing else.
 permissions: {}
 
+concurrency:
+  group: publish-${{ github.ref }}-${{ inputs.target || 'testpypi' }}
+  cancel-in-progress: false
+
 jobs:
+  check:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yml
+
   publish:
+    needs: check
     runs-on: ubuntu-latest
     environment:
-      name: pypi
-      url: https://pypi.org/p/trigger-warnings
+      name: ${{ inputs.target || 'testpypi' }}
     permissions:
       contents: read
       id-token: write
@@ -27,7 +40,62 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
+      - name: Require a version tag matching both package versions
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          from trigger_warnings import __version__
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          assert os.environ["RELEASE_REF_TYPE"] == "tag", "Dispatch on a version tag, not a branch"
+          assert os.environ["RELEASE_TAG"] == "v" + version, "Tag and metadata differ"
+          assert __version__ == version, "Runtime and metadata versions differ"
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("RELEASE_VERSION=" + version + "\n")
+          PY
       - run: python -m pip install --upgrade build twine
-      - run: python -m build
+      - name: Build staging distributions
+        if: inputs.target != 'pypi'
+        run: python -m build
+      - name: Retrieve the staged distributions for production
+        if: inputs.target == 'pypi'
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from urllib.request import urlopen
+          version = os.environ["RELEASE_VERSION"]
+          with urlopen("https://test.pypi.org/pypi/trigger-warnings/" + version + "/json") as response:
+              files = json.load(response)["urls"]
+          assert {item["packagetype"] for item in files} == {"sdist", "bdist_wheel"}
+          Path("dist").mkdir()
+          for item in files:
+              filename = item["filename"]
+              assert Path(filename).name == filename
+              with urlopen(item["url"]) as response:
+                  data = response.read()
+              assert hashlib.sha256(data).hexdigest() == item["digests"]["sha256"]
+              (Path("dist") / filename).write_bytes(data)
+          PY
       - run: python -m twine check dist/*
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Test the distribution being published
+        run: |
+          python -m venv "$RUNNER_TEMP/publish-check"
+          "$RUNNER_TEMP/publish-check/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/publish-check/bin/trigger-warnings" --version
+          "$RUNNER_TEMP/publish-check/bin/trigger-warnings" \
+            --subtitles "$GITHUB_WORKSPACE/examples/dialogue.srt" \
+            --events "$GITHUB_WORKSPACE/examples/events.json" \
+            --output "$RUNNER_TEMP/publish-example.ass"
+      - name: Publish to TestPyPI
+        if: inputs.target != 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Publish the same distributions to PyPI
+        if: inputs.target == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1

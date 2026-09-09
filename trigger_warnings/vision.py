@@ -171,6 +171,7 @@ def scan_video(
         raise VisionError("video does not exist: {}".format(video))
     if not triggers or any(not isinstance(trigger, str) or not trigger.strip() for trigger in triggers):
         raise VisionError("--model-trigger needs at least one non-empty trigger")
+    triggers = [trigger.strip() for trigger in triggers]
     if len(set(trigger.casefold() for trigger in triggers)) != len(triggers):
         raise VisionError("--model-trigger values must be unique")
     if not math.isfinite(fps) or fps <= 0:
