@@ -1,26 +1,31 @@
+<div align="center">
+
 # Trigger Warnings
 
-Create a separate subtitle track that shows a generic `TRIGGER INCOMING`
-warning before scenes in a local video. The video and original subtitles are
-never changed. The result is a review aid, not a guarantee that a film is safe.
+Spoiler-free trigger warning subtitles for local video.
 
-Choose one trigger source for each run:
+[![Tests](https://img.shields.io/github/actions/workflow/status/alexfur/trigger-warnings/tests.yml?style=for-the-badge)](https://github.com/alexfur/trigger-warnings/actions)
+[![Licence](https://img.shields.io/github/license/alexfur/trigger-warnings?style=for-the-badge)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/alexfur/trigger-warnings?style=for-the-badge)](https://github.com/alexfur/trigger-warnings/stargazers)
 
-| Source | What supplies the trigger timestamps |
-| --- | --- |
-| **Local model** | The model watches your video for the labels you provide. |
-| **DoesTheDogDie** | DDD supplies community timestamps for a selected item. |
-| **Your events** | You supply an `events.json` file. |
+</div>
 
-The local model and DoesTheDogDie are alternative sources. They are not used
-together by default. The optional `--model-from-ddd` mode is the one deliberate
-exception: it uses DDD labels as a checklist, then replaces DDD timestamps with
-timestamps found by the local model.
+## What is this?
 
-## Quick start: scan a video
+Trigger Warnings creates a separate `.ass` or `.srt` track that displays a
+generic `TRIGGER INCOMING` banner before selected scenes. It never changes the
+video or dialogue subtitles. Use a local vision model, DoesTheDogDie (DDD)
+timestamps, or your own event JSON as the timestamp source.
 
-The model scanner currently runs on Apple Silicon through MLX. Install FFmpeg,
-then install the optional vision dependencies:
+<p align="center">
+  <img src="assets/demo.gif" width="720"
+       alt="A generic trigger warning appears above ordinary dialogue in a video.">
+</p>
+
+## Quick start: local model scan
+
+The local model scanner runs on Apple Silicon through MLX. Install FFmpeg, then
+install the vision extra:
 
 ```sh
 git clone https://github.com/alexfur/trigger-warnings.git
@@ -29,7 +34,8 @@ python3 -m venv .venv
 .venv/bin/python -m pip install '.[vision]'
 ```
 
-Run one check per trigger. Repeat `--model-trigger` for more checks:
+Run one model check per trigger. This extracts an embedded subtitle track from
+the video when available and writes a new warning track:
 
 ```sh
 .venv/bin/trigger-warnings \
@@ -41,12 +47,10 @@ Run one check per trigger. Repeat `--model-trigger` for more checks:
   --provenance movie.warnings.json
 ```
 
-The default model is
-`mlx-community/SmolVLM2-500M-Video-Instruct-mlx`. It is downloaded from
-Hugging Face on first use. It is the smaller, faster option and was used for
-the repository's initial throughput benchmark.
-
-Use `--model` to select a larger MLX-VLM model, such as Qwen2.5-VL:
+The default is the compact
+`mlx-community/SmolVLM2-500M-Video-Instruct-mlx`. It downloads on first use and
+was used for the initial throughput benchmark. Use `--model` for a larger
+alternative, for example:
 
 ```sh
 .venv/bin/trigger-warnings --video movie.mkv \
@@ -54,72 +58,48 @@ Use `--model` to select a larger MLX-VLM model, such as Qwen2.5-VL:
   --model-trigger 'blood' --output movie.warnings.ass
 ```
 
-Qwen may produce better visual judgements, but it uses materially more memory
-and takes longer. Both models are candidate generators and need the same
-review.
+`--model-fps`, `--model-chunk`, `--model-width` and `--model-max-tokens` tune
+speed and coverage. `--model-revision` pins a revision. `--dry-run` performs
+the scan without writing files.
 
-Useful tuning flags are `--model-fps` (default `1`), `--model-chunk` (default
-`10` seconds), `--model-width` (default `384` pixels), and
-`--model-max-tokens` (default `16`). `--model-revision` pins a model revision.
-`--dry-run` performs the scan but writes no files.
+## Choose one trigger source
 
-Each positive result covers its whole sampled chunk, not an exact frame. A
-short or visually ambiguous event can be missed. The command refuses to write
-a subtitle when it finds no candidates, so that is never presented as an
-all-clear. Review the generated track against the video.
+| Source | Command | Timestamp source |
+| --- | --- | --- |
+| Local model | `--model-trigger LABEL` | Positive sampled video chunks |
+| DoesTheDogDie | `--ddd-item ID` | Community timestamps |
+| Your own data | `--events events.json` | Your event JSON |
 
-## Alternative source: DoesTheDogDie
+Local model scanning and DDD timestamps are alternatives. They are not combined
+in a normal run.
 
-DoesTheDogDie can provide community timestamps directly:
+### DoesTheDogDie timestamps
+
+Find the correct item, then choose only the categories you want:
 
 ```sh
-export DDD_API_KEY='your-key-in-your-shell'
+.venv/bin/trigger-warnings --ddd-search 'Title' --ddd-year 2024
 
-.venv/bin/trigger-warnings \
-  --video movie.mkv \
-  --ddd-item ITEM_ID \
-  --category 'eye mutilation' \
-  --subtitles movie.srt \
+.venv/bin/trigger-warnings --subtitles movie.srt \
+  --ddd-item ITEM_ID --category 'eye mutilation' \
   --output movie.warnings.ass
 ```
 
-Repeat `--category` to select categories. DDD labels and
-timestamps are community data, can be incomplete, and may not match your
-edition. Keep the `Powered by DoesTheDogDie.com` attribution.
+DDD needs your own API key. Prefer `DDD_API_KEY` to `--ddd-api-key`, which can
+be exposed through shell history and the process list. DDD data is community
+supplied, incomplete, and may not match your edition.
 
-If you want DDD to provide only the checklist while the local model finds the
-timestamps, add `--model-from-ddd`. That hybrid mode deliberately ignores DDD
+`--model-from-ddd` is the deliberate hybrid: DDD supplies the trigger labels as
+a checklist, while the local model supplies the timestamps. It ignores DDD
 timestamps:
 
 ```sh
 .venv/bin/trigger-warnings --video movie.mkv --ddd-item ITEM_ID \
   --model-from-ddd --category 'eye mutilation' \
-  --subtitles movie.srt --output movie.model-warnings.ass
+  --output movie.model-warnings.ass
 ```
 
-Find an item ID first with `--ddd-search TITLE --ddd-year YEAR`. The search
-only lists candidates; it does not choose one for you. DDD access requires your
-own API key. Prefer `DDD_API_KEY` over `--ddd-api-key`, which is visible in
-shell history and the process list.
-
-## Dialogue subtitles
-
-Pass an existing SRT with `--subtitles`, or let FFmpeg extract an embedded
-subtitle stream from the video with `--video`:
-
-```sh
-.venv/bin/trigger-warnings --list-streams --video movie.mkv
-.venv/bin/trigger-warnings --video movie.mkv --language eng \
-  --events events.json --output movie.warnings.ass
-```
-
-If no suitable embedded track exists, obtain an SRT separately, for example
-with the optional OpenSubtitles search and download modes. OpenSubtitles needs
-your own account and API key; it supplies dialogue only, never trigger data.
-
-## Alternative source: your own timestamps
-
-Create an event JSON file when you already know the times:
+### Your own event JSON
 
 ```json
 [
@@ -128,46 +108,85 @@ Create an event JSON file when you already know the times:
 ]
 ```
 
-Then run:
-
 ```sh
 .venv/bin/trigger-warnings --subtitles movie.srt \
   --events events.json --output movie.warnings.ass
 ```
 
-`start` is required and accepts seconds or `HH:MM:SS.mmm`. `end` is optional;
-without it, the warning ends at the event start, which is not a safe point to
-resume playback.
+`start` accepts seconds or `HH:MM:SS.mmm`; `end` is optional.
 
-## Output and safety
+## Subtitles, output and safety
 
-- `.ass` and `.srt` output contain the unchanged dialogue plus generic warning
-  cues. The category is never shown on screen.
-- `--provenance FILE` records the source, model settings, timing settings and
-  counts. It contains no credential or dialogue copy.
-- `--verify PNG` renders one preview frame from a video. It proves only that
-  FFmpeg rendered the file, not that every player will position it identically.
-- Existing files are never overwritten. Failed runs roll back files created by
-  that run.
-- A warning ending is never an all-clear. Check playback near the beginning and
-  end of the track, and check the edition you intend to watch.
+- Pass `--subtitles movie.srt`, or use `--video movie.mkv` to extract an
+  embedded stream. `--list-streams` shows stream indices and `--language` sets
+  the preferred language.
+- OpenSubtitles is an optional dialogue-only source. It never supplies trigger
+  data.
+- `--provenance FILE` records source and timing metadata without credentials or
+  dialogue text. `--verify FILE.png` renders one FFmpeg preview frame.
+- Existing files are never overwritten. A failed run rolls back files it made.
+- The output never names the trigger on screen.
 
-Use `--json` for automation (except `--help` and `--version`). Branch on `ok`,
-read every `notes` entry, and use `filesWritten` as the evidence that a file
-was published.
+> Model candidates cover their complete sampled chunks, not exact frames. They
+> can miss short or ambiguous events. No result, source, or warning ending is
+> an all-clear. Review the generated track against the edition you will watch.
 
-## Development
+For automation, use `--json` except with `--help` and `--version`. Branch on
+`ok`, read every `notes` entry, and treat `filesWritten` as proof that a file
+was created.
 
-The base package has no runtime dependencies. Run the tests with:
+## Project structure
+
+```text
+assets/                 Demo and preview assets
+docs/                   Experiments and release material
+examples/               Synthetic subtitles and events
+scripts/                Demo and benchmark helpers
+skills/                 Reusable coding-agent instructions
+tests/                  Unit and integration tests
+trigger_warnings/       CLI and subtitle-processing package
+CHANGELOG.md            Release history
+CONTRIBUTING.md         Contribution rules
+ROADMAP.md              Planned work
+SECURITY.md             Security policy
+pyproject.toml          Package metadata and dependencies
+```
+
+## Documentation
+
+| Resource | Description |
+| --- | --- |
+| [`--help`](trigger_warnings/cli.py) | Command-line options and modes. |
+| [Agent skill](skills/trigger-warnings/SKILL.md) | JSON contract and credential rules for coding agents. |
+| [Pre-scan benchmark](docs/experiments/prescan-m4.md) | SmolVLM2 throughput experiment on Apple M4. |
+| [Contributing](CONTRIBUTING.md) | Development setup, fixtures and release process. |
+| [Security](SECURITY.md) | Credential handling and vulnerability reporting. |
+
+## Contributing
+
+Run the test suite before opening a pull request:
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
 
-Set `RUN_MEDIA_TESTS=1` to include the FFmpeg integration checks. The
-repository's [contributing guide](CONTRIBUTING.md) covers fixtures, security
-and release work. Never commit a commercial video or subtitle file, a
-credential, or a personal trigger profile.
+Set `RUN_MEDIA_TESTS=1` to run the FFmpeg checks. Do not commit commercial
+video or subtitle files, copied timelines, credentials or personal trigger
+profiles.
 
-The [reusable agent skill](skills/trigger-warnings/SKILL.md) contains the full
-machine-readable CLI contract and credential rules.
+<a href="https://github.com/alexfur/trigger-warnings/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=alexfur/trigger-warnings" alt="Contributors" />
+</a>
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). The licence does not cover videos, subtitles or
+event data you supply.
+
+---
+
+<div align="center">
+
+[![Star History Chart](https://api.star-history.com/svg?repos=alexfur/trigger-warnings&type=Date)](https://star-history.com/#alexfur/trigger-warnings&Date)
+
+</div>
