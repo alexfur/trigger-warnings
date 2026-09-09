@@ -42,8 +42,11 @@ Run one check per trigger. Repeat `--model-trigger` for more checks:
 ```
 
 The default model is
-`mlx-community/Qwen2.5-VL-7B-Instruct-4bit`. It is downloaded from Hugging
-Face on first use. Choose another MLX-VLM model with `--model`:
+`mlx-community/SmolVLM2-500M-Video-Instruct-mlx`. It is downloaded from
+Hugging Face on first use. It is the smaller, faster option and was used for
+the repository's initial throughput benchmark.
+
+Use `--model` to select a larger MLX-VLM model, such as Qwen2.5-VL:
 
 ```sh
 .venv/bin/trigger-warnings --video movie.mkv \
@@ -51,17 +54,9 @@ Face on first use. Choose another MLX-VLM model with `--model`:
   --model-trigger 'blood' --output movie.warnings.ass
 ```
 
-For a smaller and faster model, use SmolVLM2 explicitly:
-
-```sh
-.venv/bin/trigger-warnings --video movie.mkv \
-  --model 'mlx-community/SmolVLM2-500M-Video-Instruct-mlx' \
-  --model-trigger 'blood' --output movie.warnings.ass
-```
-
-SmolVLM2 uses less memory and was the model used for the repository's initial
-throughput benchmark. Qwen is the stronger default, but both are candidate
-generators and need the same review.
+Qwen may produce better visual judgements, but it uses materially more memory
+and takes longer. Both models are candidate generators and need the same
+review.
 
 Useful tuning flags are `--model-fps` (default `1`), `--model-chunk` (default
 `10` seconds), `--model-width` (default `384` pixels), and
