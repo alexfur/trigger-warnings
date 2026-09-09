@@ -3,6 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge)](pyproject.toml)
 [![Tests](https://img.shields.io/github/actions/workflow/status/alexfur/trigger-warnings/tests.yml?branch=main&style=for-the-badge)](https://github.com/alexfur/trigger-warnings/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/trigger-warnings?style=for-the-badge)](https://pypi.org/project/trigger-warnings/)
 
 Add advance warnings to the subtitles of a local video. The output combines
 dialogue with a generic `TRIGGER INCOMING` warning, without naming the trigger
