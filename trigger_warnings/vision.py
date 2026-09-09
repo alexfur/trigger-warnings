@@ -105,8 +105,8 @@ def _load_backend(model_name, revision=None):
         raise VisionError(
             "could not load local vision model {!r}: {}".format(model_name, error)
         ) from error
-    # SmolVLM's default image processor can split a frame into many 2048px
-    # tiles. Video frames use one small image input for predictable cost.
+    # Some VLM image processors split a frame into many large tiles. Video
+    # frames use one small image input for predictable cost.
     image_processor = getattr(processor, "image_processor", None)
     if image_processor is not None:
         image_processor.size = {"longest_edge": 512}
