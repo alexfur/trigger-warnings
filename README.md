@@ -4,10 +4,18 @@ Create a separate subtitle track that shows a generic `TRIGGER INCOMING`
 warning before scenes in a local video. The video and original subtitles are
 never changed. The result is a review aid, not a guarantee that a film is safe.
 
-The primary workflow is a local vision-model scan. You name the triggers, the
-model watches sampled frames, and Trigger Warnings turns positive chunks into a
-subtitle track. You can also supply timestamps yourself or import them from
-[DoesTheDogDie](https://www.doesthedogdie.com/api).
+Choose one trigger source for each run:
+
+| Source | What supplies the trigger timestamps |
+| --- | --- |
+| **Local model** | The model watches your video for the labels you provide. |
+| **DoesTheDogDie** | DDD supplies community timestamps for a selected item. |
+| **Your events** | You supply an `events.json` file. |
+
+The local model and DoesTheDogDie are alternative sources. They are not used
+together by default. The optional `--model-from-ddd` mode is the one deliberate
+exception: it uses DDD labels as a checklist, then replaces DDD timestamps with
+timestamps found by the local model.
 
 ## Quick start: scan a video
 
@@ -65,10 +73,9 @@ short or visually ambiguous event can be missed. The command refuses to write
 a subtitle when it finds no candidates, so that is never presented as an
 all-clear. Review the generated track against the video.
 
-## Use DoesTheDogDie for the checklist
+## Alternative source: DoesTheDogDie
 
-DoesTheDogDie can provide either community timestamps or the labels to check.
-The latter is useful when you want the model to replace DDD's timestamps:
+DoesTheDogDie can provide community timestamps directly:
 
 ```sh
 export DDD_API_KEY='your-key-in-your-shell'
@@ -76,16 +83,24 @@ export DDD_API_KEY='your-key-in-your-shell'
 .venv/bin/trigger-warnings \
   --video movie.mkv \
   --ddd-item ITEM_ID \
-  --model-from-ddd \
   --category 'eye mutilation' \
   --subtitles movie.srt \
   --output movie.warnings.ass
 ```
 
-`--model-from-ddd` uses DDD trigger labels as the model checklist and ignores
-DDD timestamps. Repeat `--category` to narrow the checklist. DDD labels and
+Repeat `--category` to select categories. DDD labels and
 timestamps are community data, can be incomplete, and may not match your
 edition. Keep the `Powered by DoesTheDogDie.com` attribution.
+
+If you want DDD to provide only the checklist while the local model finds the
+timestamps, add `--model-from-ddd`. That hybrid mode deliberately ignores DDD
+timestamps:
+
+```sh
+.venv/bin/trigger-warnings --video movie.mkv --ddd-item ITEM_ID \
+  --model-from-ddd --category 'eye mutilation' \
+  --subtitles movie.srt --output movie.model-warnings.ass
+```
 
 To use DDD timestamps directly instead:
 
@@ -115,7 +130,7 @@ If no suitable embedded track exists, obtain an SRT separately, for example
 with the optional OpenSubtitles search and download modes. OpenSubtitles needs
 your own account and API key; it supplies dialogue only, never trigger data.
 
-## Supply timestamps yourself
+## Alternative source: your own timestamps
 
 Create an event JSON file when you already know the times:
 
