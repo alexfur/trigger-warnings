@@ -103,7 +103,7 @@ generation rather than substituting a clean result.
 This source is opt-in and local. It needs Apple Silicon, FFmpeg and the optional
 extra (`pip install 'trigger-warnings[vision]'`). Pass `--video` and one or
 more repeated `--model-trigger` values. The default is the
-`mlx-community/SmolVLM2-500M-Video-Instruct-mlx` model; `--model` and
+`mlx-community/Qwen2.5-VL-7B-Instruct-4bit` model; `--model` and
 `--model-revision` override it. The scanner samples frames, asks a strict yes/no
 question per trigger and chunk, and marks a positive chunk as
 `severity: "model-candidate"`. It does not claim frame-level precision, and a

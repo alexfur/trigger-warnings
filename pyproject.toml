@@ -12,14 +12,6 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "Alex Furman"}]
 dependencies = []
-
-[project.optional-dependencies]
-# Local model scanning is opt-in and currently targets Apple Silicon through
-# MLX. Keep the base subtitle tool dependency-free and cheap to install.
-vision = [
-    "mlx-vlm>=0.7,<0.8",
-    "torchvision>=0.29,<0.30",
-]
 keywords = ["subtitles", "trigger-warnings", "accessibility", "srt", "ass", "cli"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -34,6 +26,14 @@ classifiers = [
   "Operating System :: OS Independent",
   "Topic :: Multimedia :: Video",
   "Topic :: Text Processing :: Markup",
+]
+
+[project.optional-dependencies]
+# Local model scanning is opt-in and currently targets Apple Silicon through
+# MLX. Keep the base subtitle tool dependency-free and cheap to install.
+vision = [
+    "mlx-vlm>=0.7,<0.8",
+    "torchvision>=0.29,<0.30",
 ]
 
 [project.urls]

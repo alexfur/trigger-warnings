@@ -173,7 +173,7 @@ trigger-warnings --video jaws.mkv --model-trigger 'blood' \
   --output jaws.model-warnings.ass --provenance jaws.model.provenance.json
 ```
 
-The default model is `mlx-community/SmolVLM2-500M-Video-Instruct-mlx`. Use
+The default model is `mlx-community/Qwen2.5-VL-7B-Instruct-4bit`. Use
 `--model` (and optionally `--model-revision`) to choose another MLX-VLM model.
 `--model-fps`, `--model-chunk` and `--model-width` trade speed for coverage.
 The command writes no subtitle if the model returns no candidates. Review the

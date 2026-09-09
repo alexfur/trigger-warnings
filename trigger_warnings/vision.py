@@ -28,7 +28,7 @@ class VisionError(ValueError):
 
 VisionScan = namedtuple("VisionScan", "events notes metadata")
 
-DEFAULT_MODEL = "mlx-community/SmolVLM2-500M-Video-Instruct-mlx"
+DEFAULT_MODEL = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
 DEFAULT_CHUNK_SECONDS = 10.0
 DEFAULT_FPS = 1.0
 DEFAULT_WIDTH = 384
