@@ -24,15 +24,25 @@ timestamps, or your own event JSON as the timestamp source.
 
 ## Quick start: local model scan
 
-The local model scanner runs on Apple Silicon through MLX. Install FFmpeg, then
-install the vision extra:
+Use this route only on a Mac with an Apple chip: M1, M2, M3 or M4. The model
+runs on your Mac; no video is uploaded to an AI service. You need FFmpeg to
+read video and a separate Python extra that installs the local-model support.
+
+On that Mac, run:
 
 ```sh
+brew install ffmpeg
 git clone https://github.com/alexfur/trigger-warnings.git
 cd trigger-warnings
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[vision]'
 ```
+
+`brew` is [Homebrew](https://brew.sh/); install it first if the command is not
+available. `MLX` is the Apple-chip library installed by the last command. You
+do not need to install or configure it separately. If you use an Intel Mac,
+Windows or Linux, skip this section and use DDD timestamps or your own
+`events.json` instead.
 
 Run one model check per trigger. This extracts an embedded subtitle track from
 the video when available and writes a new warning track:
