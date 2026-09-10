@@ -28,7 +28,7 @@ import time
 from .progress import ProgressBar
 from .vision import VisionScan
 
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 
 
 class GeminiError(ValueError):

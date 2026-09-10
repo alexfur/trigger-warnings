@@ -531,8 +531,8 @@ def prompt_source_selection(prompter, report=None, environ=None, video_path=None
         descriptors = [desc_input] if desc_input else []
 
         model_name = prompter.text(
-            "Gemini model (Enter for default 'gemini-2.0-flash'): "
-        ).strip() or "gemini-2.0-flash"
+            "Gemini model (Enter for default 'gemini-3.6-flash'): "
+        ).strip() or "gemini-3.6-flash"
 
         sanitize_ans = prompter.text(
             "Sanitize video locally before upload (strip tags, downscale to 480p)? [Y/n]: "
@@ -822,7 +822,7 @@ def run_wizard(prompter, report=None, environ=None, initial_args=None,
                 report("  Categories: {}".format(", ".join(source_info["category"])))
         elif source_info["source"] == SOURCE_GEMINI:
             report("  Trigger source: Google Gemini ({}) on {}".format(
-                source_info.get("gemini_model", "gemini-2.0-flash"), source_info["video"]))
+                source_info.get("gemini_model", "gemini-3.6-flash"), source_info["video"]))
             report("  Triggers: {}".format(", ".join(source_info.get("model_trigger", []))))
         else:
             report("  Trigger source: Local model on {}".format(source_info["video"]))
@@ -864,7 +864,7 @@ def run_wizard(prompter, report=None, environ=None, initial_args=None,
         args.provider = "gemini"
         args.model_trigger = source_info.get("model_trigger", [])
         args.model_trigger_desc = source_info.get("model_trigger_desc", [])
-        args.gemini_model = source_info.get("gemini_model", "gemini-2.0-flash")
+        args.gemini_model = source_info.get("gemini_model", "gemini-3.6-flash")
         args.gemini_api_key = source_info.get("gemini_api_key")
         args.no_gemini_sanitize = source_info.get("no_gemini_sanitize", False)
     elif source_info["source"] == SOURCE_MODEL:

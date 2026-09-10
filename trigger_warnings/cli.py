@@ -345,8 +345,8 @@ def build_parser():
         help="Google AI Studio API key for --provider gemini (falls back to GEMINI_API_KEY environment variable)",
     )
     parser.add_argument(
-        "--gemini-model", default="gemini-2.0-flash", metavar="MODEL",
-        help="Gemini model for --provider gemini (default: gemini-2.0-flash)",
+        "--gemini-model", default="gemini-3.6-flash", metavar="MODEL",
+        help="Gemini model for --provider gemini (default: gemini-3.6-flash)",
     )
     parser.add_argument(
         "--no-gemini-sanitize", action="store_true",
@@ -1169,7 +1169,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--progress-json", args.progress_json, False),
         ("--provider", args.provider, "local"),
         ("--gemini-api-key", args.gemini_api_key, None),
-        ("--gemini-model", args.gemini_model, "gemini-2.0-flash"),
+        ("--gemini-model", args.gemini_model, "gemini-3.6-flash"),
         ("--no-gemini-sanitize", args.no_gemini_sanitize, False),
         ("--os-search", args.os_search, None),
         ("--os-file", args.os_file, None),
@@ -1689,7 +1689,7 @@ def run(args, report, result=None, setup_prompter=None):
             ("--progress-json", args.progress_json, False),
             ("--provider", args.provider, "local"),
             ("--gemini-api-key", args.gemini_api_key, None),
-            ("--gemini-model", args.gemini_model, "gemini-2.0-flash"),
+            ("--gemini-model", args.gemini_model, "gemini-3.6-flash"),
             ("--no-gemini-sanitize", args.no_gemini_sanitize, False),
         ):
             if value is not None and _was_supplied(args, flag, value, default):

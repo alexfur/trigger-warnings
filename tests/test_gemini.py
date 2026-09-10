@@ -79,7 +79,7 @@ def test_scan_video_gemini_mock_flow(tmp_path):
         video,
         ["eyes"],
         api_key="mock_key",
-        model="gemini-2.0-flash",
+        model="gemini-3.6-flash",
         trigger_descriptors={"eyes": "severe eye injury"},
         report=report_lines.append,
         sanitize=False,  # Skip ffmpeg during mock test

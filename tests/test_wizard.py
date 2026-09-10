@@ -479,7 +479,7 @@ class InteractiveWizardTests(unittest.TestCase):
                 "video.mp4",
                 "eyes, nails",
                 "eyes=severe trauma",
-                "gemini-2.0-flash",
+                "gemini-3.6-flash",
                 "y",  # sanitize
             ],
             secrets=["fake-gemini-key"],
@@ -489,7 +489,7 @@ class InteractiveWizardTests(unittest.TestCase):
         self.assertEqual("gemini", res["provider"])
         self.assertEqual(["eyes", "nails"], res["model_trigger"])
         self.assertEqual(["eyes=severe trauma"], res["model_trigger_desc"])
-        self.assertEqual("gemini-2.0-flash", res["gemini_model"])
+        self.assertEqual("gemini-3.6-flash", res["gemini_model"])
         self.assertEqual("fake-gemini-key", res["gemini_api_key"])
         self.assertFalse(res["no_gemini_sanitize"])
 

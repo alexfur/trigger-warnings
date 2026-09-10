@@ -179,7 +179,7 @@ measures SmolVLM2 on synthetic footage, not Qwen or real trigger-detection accur
 | `--model-trigger-desc` | Unspecified | Prompt description for a trigger (`LABEL=DESC`) to reduce false positives |
 | `--provider` | `local` | Scanning provider: `local` (offline Apple Silicon MLX) or `gemini` (Google Cloud) |
 | `--gemini-api-key` | Env var | Google AI Studio API key (falls back to `GEMINI_API_KEY`) |
-| `--gemini-model` | `gemini-2.0-flash` | Gemini model for cloud scanning |
+| `--gemini-model` | `gemini-3.6-flash` | Gemini model for cloud scanning |
 | `--no-gemini-sanitize` | Off | Skip local FFmpeg metadata stripping and downscaling before upload |
 | `--model-fps` | `1` | Frames sampled per second (local model) |
 | `--model-chunk` | `10` | Video seconds checked per chunk (local model) |
