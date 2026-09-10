@@ -302,6 +302,10 @@ def build_parser():
         help="local MLX-VLM model name or path for --model-trigger",
     )
     parser.add_argument(
+        "--model-local-only", action="store_true",
+        help="use a local model directory or cached model; never download model files",
+    )
+    parser.add_argument(
         "--model-revision", metavar="REVISION",
         help="model revision to load for --model-trigger",
     )
@@ -749,6 +753,7 @@ def _load_model_events(args, report, triggers=None):
         args.model_trigger if triggers is None else triggers,
         model=args.model or vision.DEFAULT_MODEL,
         revision=args.model_revision,
+        local_only=args.model_local_only,
         fps=args.model_fps,
         chunk_seconds=args.model_chunk,
         width=args.model_width,
@@ -1049,6 +1054,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--model-from-ddd", args.model_from_ddd, False),
         ("--model", args.model, None),
         ("--model-revision", args.model_revision, None),
+        ("--model-local-only", args.model_local_only, False),
         ("--model-fps", args.model_fps, 1.0),
         ("--model-chunk", args.model_chunk, 10.0),
         ("--model-width", args.model_width, 384),
@@ -1400,11 +1406,13 @@ def run(args, report, result=None, setup_prompter=None):
         for flag, value in (("--model-trigger", args.model_trigger),
                             ("--model-from-ddd", args.model_from_ddd),
                             ("--model", args.model), ("--model-revision", args.model_revision),
+                            ("--model-local-only", args.model_local_only),
                             ("--model-fps", args.model_fps), ("--model-chunk", args.model_chunk),
                             ("--model-width", args.model_width), ("--model-max-tokens", args.model_max_tokens)):
             default = {"--model-fps": 1.0, "--model-chunk": 10.0,
                        "--model-width": 384, "--model-max-tokens": 16,
-                       "--model-trigger": [], "--model-from-ddd": False}.get(flag)
+                       "--model-trigger": [], "--model-from-ddd": False,
+                       "--model-local-only": False}.get(flag)
             if value is not None and _was_supplied(args, flag, value, default):
                 raise TriggerWarningsError(
                     "--list-streams does not generate output; run it without {}".format(flag)
@@ -1505,6 +1513,7 @@ def run(args, report, result=None, setup_prompter=None):
         for flag, value, default in (
             ("--model", args.model, None),
             ("--model-revision", args.model_revision, None),
+            ("--model-local-only", args.model_local_only, False),
             ("--model-fps", args.model_fps, 1.0),
             ("--model-chunk", args.model_chunk, 10.0),
             ("--model-width", args.model_width, 384),

@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from trigger_warnings import cli, core, ddd, vision
+from trigger_warnings.video import VideoClip
 
 
 class AnswerTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class AnswerTests(unittest.TestCase):
         return vision._answer(
             mock.Mock(return_value=types.SimpleNamespace(text=text)),
             mock.Mock(return_value="prompt"), mock.Mock(), mock.Mock(),
-            mock.Mock(), [object()], "red rectangle", 16,
+            mock.Mock(), VideoClip(0, 1, [object()], [0]), "red rectangle", 16, 1,
         )
 
     def test_accepts_explicit_yes_and_no(self):
@@ -36,7 +37,26 @@ class AnswerTests(unittest.TestCase):
     def test_generation_failure_is_not_a_negative_detection(self):
         with self.assertRaisesRegex(vision.VisionError, "vision model failed"):
             vision._answer(mock.Mock(side_effect=RuntimeError("synthetic failure")),
-                           mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock(), [], "red", 16)
+                           mock.Mock(), mock.Mock(), mock.Mock(), mock.Mock(),
+                           VideoClip(0, 1, [], []), "red", 16, 1)
+
+    def test_video_pixels_and_timestamps_reach_inference_with_the_right_prompt(self):
+        clip = VideoClip(10, 12, [object(), object()], [10, 11], "/video.mkv")
+        for kind in ("smolvlm", "qwen2_5_vl"):
+            with self.subTest(kind=kind):
+                model = types.SimpleNamespace(config=types.SimpleNamespace(model_type=kind))
+                generate = mock.Mock(return_value=types.SimpleNamespace(text="yes"))
+                template = mock.Mock(return_value="prompt")
+                self.assertTrue(vision._answer(generate, template, model, mock.Mock(),
+                                               mock.Mock(), clip, "red", 16, 1))
+                self.assertEqual(generate.call_args.kwargs["video"], [clip.frames])
+                self.assertNotIn("image", generate.call_args.kwargs)
+                self.assertIn("10.000s, 11.000s", template.call_args.args[2])
+                if kind == "smolvlm":
+                    self.assertEqual(template.call_args.kwargs["num_images"], 2)
+                else:
+                    self.assertEqual(template.call_args.kwargs["video"], clip.source)
+                    self.assertEqual(template.call_args.kwargs["num_images"], 0)
 
 
 class ScanTests(unittest.TestCase):
@@ -46,21 +66,13 @@ class ScanTests(unittest.TestCase):
         self.video = Path(self.folder.name) / "synthetic.mp4"
         self.video.touch()
         self.backend = self.enter_patch("_load_backend", return_value=(mock.Mock(),) * 5)
-        self.enter_patch("_duration", return_value=25.0)
-        self.enter_patch("_binary", side_effect=lambda name: name)
-        self.frame_folders = []
-
-        def frames(argv):
-            target = Path(argv[-1].replace("%05d", "00001"))
-            target.touch()
-            self.frame_folders.append(target.parent.parent)
-
-        self.enter_patch("_run", side_effect=frames)
-        fake_pil = types.ModuleType("PIL")
-        fake_pil.Image = mock.MagicMock()
-        patcher = mock.patch.dict(sys.modules, {"PIL": fake_pil})
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.model_path = self.video.parent / "model"
+        self.resolve = self.enter_patch("resolve_model", return_value=self.model_path)
+        self.reader = mock.MagicMock()
+        self.reader.duration = 25.0
+        self.reader.read_clip.side_effect = lambda start, end: VideoClip(start, end, [object()], [start])
+        self.reader_context = self.enter_patch("VideoReader")
+        self.reader_context.return_value.__enter__.return_value = self.reader
 
     def enter_patch(self, name, **kwargs):
         patcher = mock.patch.object(vision, name, **kwargs)
@@ -76,16 +88,19 @@ class ScanTests(unittest.TestCase):
             {"start": 20, "end": 25, "label": "red", "severity": "model-candidate"},
         ])
         self.assertEqual(answers.call_count, 6)
-        self.backend.assert_called_once_with("test-model", "abc")
+        self.resolve.assert_called_once_with("test-model", revision="abc", local_only=False)
+        self.backend.assert_called_once_with(self.model_path)
+        self.assertEqual(self.reader.read_clip.call_args_list,
+                         [mock.call(0, 10), mock.call(10, 20), mock.call(20, 25)])
         self.assertEqual(result.metadata["requestedTriggers"], ["red", "blue"])
         self.assertTrue(result.notes)
-        self.assertTrue(all(not path.exists() for path in self.frame_folders))
+        self.reader_context.return_value.__exit__.assert_called_once()
 
-    def test_no_candidates_is_an_error_and_cleans_frames(self):
+    def test_no_candidates_is_an_error_and_closes_video(self):
         self.enter_patch("_answer", return_value=False)
         with self.assertRaisesRegex(vision.VisionError, "does not establish"):
             vision.scan_video(self.video, ["red"])
-        self.assertTrue(all(not path.exists() for path in self.frame_folders))
+        self.reader_context.return_value.__exit__.assert_called_once()
 
     def test_bad_inputs_fail_before_model_loading(self):
         for triggers, kwargs in [([], {}), ([" "], {}), (["red", " RED "], {}),
@@ -125,7 +140,7 @@ class ScanTests(unittest.TestCase):
         self.assertIn("Scan failed", err.getvalue())
         self.assertNotIn("Scan complete", err.getvalue())
 
-    def test_sigterm_cancels_inference_and_cleans_frames(self):
+    def test_sigterm_cancels_inference_and_closes_video(self):
         self.enter_patch("_answer", side_effect=lambda *args: signal.raise_signal(signal.SIGTERM))
         original = signal.getsignal(signal.SIGTERM)
         err = io.StringIO()
@@ -134,7 +149,7 @@ class ScanTests(unittest.TestCase):
                 vision.scan_video(self.video, ["red"], report=mock.Mock())
         self.assertIn("Scan cancelled", err.getvalue())
         self.assertEqual(signal.getsignal(signal.SIGTERM), original)
-        self.assertTrue(all(not path.exists() for path in self.frame_folders))
+        self.reader_context.return_value.__exit__.assert_called_once()
 
 
 class ModelCliTests(unittest.TestCase):
@@ -215,3 +230,19 @@ class ModelCliTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         scan.assert_not_called()
         self.assertEqual(self.output.read_text(), "original")
+
+    def test_local_only_choice_reaches_model_resolution(self):
+        with mock.patch.object(vision, "scan_video", return_value=self.scan) as scan:
+            status, _ = self.invoke("--model-trigger", "red", "--model-local-only")
+        self.assertEqual(status, 0)
+        self.assertTrue(scan.call_args.kwargs["local_only"])
+
+    def test_local_only_flag_is_rejected_in_non_model_modes(self):
+        for mode in (["--setup"], ["--os-search", "synthetic"],
+                     ["--ddd-search", "synthetic"], ["--list-streams", "--video", str(self.video)]):
+            with self.subTest(mode=mode), mock.patch.object(cli.keychain, "hydrate", return_value={}), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                status = cli.main(["--json", *mode, "--model-local-only"])
+                result = json.loads(out.getvalue())
+                self.assertEqual(status, 2)
+                self.assertIn("--model-local-only", result["error"]["message"])

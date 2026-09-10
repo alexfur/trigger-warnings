@@ -128,6 +128,26 @@ captured output gets a newline snapshot every five seconds. Percentage measures
 completed trigger checks. Progress messages are not detections. Cancellation
 discards partial candidates; never interpret it as a scan with no matches.
 
+Model acquisition is separate from inference. Honour a user-supplied MLX model
+directory with `--model /path/to/model`; no Hub request is made for an existing
+directory. Use `--model-local-only` when the user wants cached or manually
+downloaded weights without a model download. A cache miss fails with next steps;
+do not retry with downloads enabled against that preference. The flag does not
+disable an explicitly requested DDD API call.
+
+For a separate download, use `hf download MODEL_ID --local-dir /path/to/model`,
+then pass that directory to `--model`. It must contain the model configuration,
+weights, processor and tokenizer, not just a GGUF or single weights file.
+`--model-revision` applies to Hub IDs and is rejected for local directories.
+Hub IDs without `--model-local-only` retain automatic download and cache reuse.
+See [local models and video input](../../docs/model-video.md) for commands.
+
+The scan opens the original video with PyAV and passes sampled clips through
+MLX-VLM's `video=` input. Do not pre-extract JPEG batches. The decoder keeps one
+clip in memory and uses presentation timestamps, including variable frame
+rates. Chunking still determines candidate intervals. FFmpeg remains necessary
+for subtitle extraction and preview rendering.
+
 This source is opt-in and local. It needs Apple Silicon, FFmpeg and the optional
 extra (`pip install 'trigger-warnings[vision]'`). Pass `--video` and one or
 more repeated `--model-trigger` values. The default is the

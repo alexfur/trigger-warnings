@@ -34,6 +34,7 @@ classifiers = [
 vision = [
     "mlx-vlm>=0.7,<0.8",
     "torchvision>=0.29,<0.30",
+    "av>=14,<17",
 ]
 
 [project.urls]

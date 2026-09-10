@@ -3,4 +3,5 @@ recursive-include assets *.svg *.png *.gif
 recursive-include examples *.srt *.json
 recursive-include scripts *.py
 recursive-include skills *.md
+include docs/model-video.md
 recursive-include tests *.py

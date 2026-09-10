@@ -11,17 +11,15 @@ subtitle-only command continues to work without MLX-VLM installed.
 """
 
 from pathlib import Path
-import json
 import contextlib
 import io
 import math
 import re
-import shutil
-import subprocess
-import tempfile
 from collections import namedtuple
 
 from .progress import ProgressBar
+from .models import resolve_model
+from .video import VideoReader
 
 
 class VisionError(ValueError):
@@ -37,58 +35,13 @@ DEFAULT_WIDTH = 384
 DEFAULT_MAX_TOKENS = 16
 _YES_NO = re.compile(r"^\s*(yes|no)[\s.!]*$", re.IGNORECASE)
 
-def _binary(name):
-    path = shutil.which(name)
-    if not path:
-        raise VisionError(
-            "{} was not found on PATH. Install FFmpeg for --model-trigger, "
-            "or use --events instead.".format(name)
-        )
-    return path
 
-
-def _run(argv, timeout=120):
-    try:
-        result = subprocess.run(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired:
-        raise VisionError("{} timed out while preparing model frames".format(Path(argv[0]).name))
-    except OSError as error:
-        raise VisionError("cannot run {}: {}".format(Path(argv[0]).name, error))
-    if result.returncode:
-        detail = (result.stderr or result.stdout or "no diagnostic output").strip()
-        raise VisionError("{} failed while preparing model frames: {}".format(
-            Path(argv[0]).name, detail
-        ))
-    return result
-
-
-def _duration(video):
-    result = _run([
-        _binary("ffprobe"), "-hide_banner", "-loglevel", "error",
-        "-show_entries", "format=duration", "-of", "json", str(video),
-    ])
-    try:
-        value = float(json.loads(result.stdout)["format"]["duration"])
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        raise VisionError("ffprobe did not return a usable video duration")
-    if not math.isfinite(value) or value <= 0:
-        raise VisionError("video duration must be finite and positive")
-    return value
-
-
-def _load_backend(model_name, revision=None):
+def _load_backend(model_path):
     try:
         import mlx.core as mx
         from mlx_vlm import generate, load
         from mlx_vlm.prompt_utils import apply_chat_template
+        from mlx_vlm.generate.video import processor_handles_video
     except ImportError as error:
         raise VisionError(
             "--model-trigger needs the optional local vision dependencies. "
@@ -96,15 +49,16 @@ def _load_backend(model_name, revision=None):
             "(Apple Silicon is required by the MLX backend)."
         ) from error
     try:
-        kwargs = {} if revision is None else {"revision": revision}
-        # Keep the downloader's own bars out of our progress stream. The scan
-        # heartbeat holds the original stderr while this redirect is active.
+        # Inference receives a resolved directory and never chooses a download.
+        # Keep incidental library output separate from the scan heartbeat.
         with contextlib.redirect_stderr(io.StringIO()):
-            model, processor = load(model_name, **kwargs)
+            model, processor = load(str(model_path))
     except Exception as error:
         raise VisionError(
-            "could not load local vision model {!r}: {}".format(model_name, error)
+            "could not load local vision model {!r}: {}".format(str(model_path), error)
         ) from error
+    if model.config.model_type != "smolvlm" and not processor_handles_video(processor):
+        raise VisionError("this model's MLX processor does not consume video input; use a video-capable model")
     # Some VLM image processors split a frame into many large tiles. Video
     # frames use one small image input for predictable cost.
     image_processor = getattr(processor, "image_processor", None)
@@ -115,20 +69,26 @@ def _load_backend(model_name, revision=None):
     return mx, generate, apply_chat_template, model, processor
 
 
-def _answer(generate, apply_chat_template, model, processor, mx, images, trigger, max_tokens):
+def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, max_tokens, fps):
     prompt = (
-        "These are consecutive frames from a local video. Does any frame show "
-        "the following trigger: {!r}? Answer only yes or no.".format(trigger)
+        "This video clip covers {:.3f} to {:.3f} seconds. "
+        "Its sampled frames are in chronological order at these video times: {}. "
+        "Does this clip show the following trigger: {!r}? Answer only yes or no.".format(
+            clip.start, clip.end, ", ".join("{:.3f}s".format(t) for t in clip.timestamps), trigger)
     )
     try:
-        prompt = apply_chat_template(
-            processor, model.config, prompt, num_images=len(images)
-        )
+        # SmolVLM's video processor expands one visual token per frame. Native
+        # video processors (such as Qwen's) need a video token instead.
+        prompt_options = ({"num_images": len(clip.frames)}
+                          if model.config.model_type == "smolvlm" else
+                          {"num_images": 0, "video": clip.source, "fps": fps})
+        prompt = apply_chat_template(processor, model.config, prompt, **prompt_options)
         result = generate(
             model,
             processor,
             prompt,
-            image=images,
+            video=[clip.frames],
+            fps=fps,
             max_tokens=max_tokens,
             temperature=0.0,
             verbose=False,
@@ -154,6 +114,7 @@ def scan_video(
     *,
     model=DEFAULT_MODEL,
     revision=None,
+    local_only=False,
     fps=DEFAULT_FPS,
     chunk_seconds=DEFAULT_CHUNK_SECONDS,
     width=DEFAULT_WIDTH,
@@ -163,7 +124,7 @@ def scan_video(
 ):
     """Scan ``video`` for each requested trigger and return candidate events.
 
-    The input is decoded in temporary frame directories and never modified.
+    The video is decoded directly into memory and never modified.
     Events cover the complete positive chunk because this first scanner does
     not claim sub-chunk temporal precision. ``report`` receives progress text.
     """
@@ -187,47 +148,26 @@ def scan_video(
     with ProgressBar(total_triggers=len(triggers),
                      enabled=report is not None or json_progress,
                      json_progress=json_progress) as progress:
-        duration = _duration(video)
-        progress.total_chunks = math.ceil(duration / chunk_seconds)
-        progress.set_stage("Loading model (first run may download weights)")
-        mx, generate, apply_chat_template, loaded_model, processor = _load_backend(model, revision)
-        events = []
-        chunks = math.ceil(duration / chunk_seconds)
-        with tempfile.TemporaryDirectory(prefix="trigger-warnings-vision-") as folder:
-            folder = Path(folder)
+        with VideoReader(video, fps, width) as reader:
+            duration = reader.duration
+            chunks = math.ceil(duration / chunk_seconds)
+            progress.total_chunks = chunks
+            progress.set_stage("Resolving local model" if local_only else "Resolving model (may download)")
+            # Resolve first: inference only receives an existing local directory.
+            with contextlib.redirect_stderr(io.StringIO()):
+                model_path = resolve_model(model, revision=revision, local_only=local_only)
+            progress.set_stage("Loading model")
+            mx, generate, apply_chat_template, loaded_model, processor = _load_backend(model_path)
+            events = []
             for number in range(chunks):
                 progress.start_chunk(number)
                 start = number * chunk_seconds
                 end = min(duration, start + chunk_seconds)
-                frame_dir = folder / "{:06d}".format(number)
-                frame_dir.mkdir()
-                _run([
-                    _binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
-                    "-ss", "{:.6f}".format(start), "-i", str(video),
-                    "-t", "{:.6f}".format(end - start),
-                    "-vf", "fps={:.6f},scale={}:{}".format(fps, width, -2),
-                    "-q:v", "3", str(frame_dir / "%05d.jpg"),
-                ])
-                paths = sorted(frame_dir.glob("*.jpg"))
-                if not paths:
-                    raise VisionError("FFmpeg produced no frames for {:.3f}s".format(start))
-                try:
-                    from PIL import Image
-                except ImportError as error:
-                    raise VisionError(
-                        "--model-trigger needs Pillow; install the optional vision dependencies"
-                    ) from error
-                images = []
-                for path in paths:
-                    try:
-                        with Image.open(path) as image:
-                            images.append(image.convert("RGB"))
-                    except OSError as error:
-                        raise VisionError("could not read model frame {}: {}".format(path, error)) from error
+                clip = reader.read_clip(start, end)
                 for trigger_idx, trigger in enumerate(triggers):
                     progress.start_trigger(trigger_idx, trigger)
                     if _answer(generate, apply_chat_template, loaded_model, processor, mx,
-                               images, trigger.strip(), max_tokens):
+                               clip, trigger.strip(), max_tokens, fps):
                         events.append({
                             "start": round(start, 3),
                             "end": round(end, 3),
@@ -235,6 +175,7 @@ def scan_video(
                             "severity": "model-candidate",
                         })
                     progress.finish_trigger()
+                del clip
         if not events:
             raise VisionError(
                 "the model found no candidate events. This does not establish that "
@@ -251,6 +192,8 @@ def scan_video(
         "kind": "local-model",
         "model": model,
         "revision": revision,
+        "localOnly": local_only,
+        "videoInput": "in-memory-video",
         "fps": fps,
         "chunkSeconds": chunk_seconds,
         "frameWidth": width,

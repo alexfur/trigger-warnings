@@ -77,7 +77,7 @@ class ProgressBar:
             self.current_chunk = chunk_idx + 1
             self.current_trigger = 0
             self.trigger_name = None
-            self.stage = "Extracting frames"
+            self.stage = "Decoding video"
         self._draw()
 
     def start_trigger(self, trigger_idx, trigger_name):

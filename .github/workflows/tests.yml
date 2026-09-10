@@ -54,5 +54,6 @@ jobs:
       - run: python -m pip install '.[vision]'
       - run: python -m pip check
       - name: Check optional imports (no model download or GPU required)
-        run: python -c 'from mlx_vlm import load, generate; from mlx_vlm.prompt_utils import apply_chat_template; from PIL import Image'
+        run: python -c 'from mlx_vlm import load, generate; from mlx_vlm.prompt_utils import apply_chat_template; import av; from PIL import Image'
       - run: python -m unittest discover -s tests -p test_vision.py -v
+      - run: python -m unittest discover -s tests -p test_video.py -v
