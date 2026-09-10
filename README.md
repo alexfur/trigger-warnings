@@ -106,16 +106,12 @@ The scan displays a live bar on stderr, including a heartbeat while the model
 loads or checks frames. It shows completed checks, elapsed time and an estimated
 time remaining. Captured output gets a bar snapshot every five seconds.
 
-For a live bar when an agent runs a scan in Maestri, open a visible terminal:
+To watch the scan in a separate terminal window:
 
 ```bash
 python3 scripts/scan-in-terminal.py --json \
   --video "movie.mkv" --model-trigger 'blood' --output "movie.warnings.ass"
 ```
-
-Keep stderr attached to that terminal. Agent tool panels can truncate or delay
-output. The launcher starts the scan once; its exit status only reports whether
-the terminal opened. Read the scan's final result in the new terminal.
 
 `--json` keeps the final result on stdout. Add `--progress-json` only when a
 program needs JSON progress on stderr; this replaces the visual bar:
