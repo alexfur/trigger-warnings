@@ -45,23 +45,27 @@ def scan_episode(video_path):
     print(f"\n{'='*70}\nStarting Gemini scan for: {video_path.name}\n{'='*70}", flush=True)
     t0 = time.time()
     
-    parser = cli.build_parser()
-    args = parser.parse_args(argv)
-    
-    result = {}
-    exit_code = cli.run(args, lambda msg, level="info": print(f"[{level.upper()}] {msg}", flush=True), result)
+    exit_code = cli.main(argv)
     elapsed = time.time() - t0
-    print(f"\nCompleted {video_path.name} in {elapsed:.1f}s with exit code {exit_code}\n", flush=True)
-    return exit_code, result
+    print(f"\nFinished {video_path.name} in {elapsed:.1f}s (exit code {exit_code})\n", flush=True)
+    return exit_code
 
 def main():
+    print("Dark Season 1 (Episodes 8, 9, 10) Gemini Cloud Trigger Scan", flush=True)
+    print("Triggers: eyes, nails, teeth, head smashing", flush=True)
+    print(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    
+    results = {}
     for ep in EPISODES:
         if not ep.exists():
             print(f"Error: {ep} does not exist!", file=sys.stderr)
-            return 1
-        code, res = scan_episode(ep)
-        if code != 0:
-            print(f"Warning: Episode {ep.name} returned exit code {code}", file=sys.stderr)
+            continue
+        code = scan_episode(ep)
+        results[ep.name] = "SUCCESS" if code == 0 else f"EXIT_{code}"
+
+    print(f"\n{'='*70}\nALL EPISODES PROCESSED\n{'='*70}", flush=True)
+    for name, status in results.items():
+        print(f"  - {name}: {status}")
 
 if __name__ == "__main__":
     main()
