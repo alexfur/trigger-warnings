@@ -68,7 +68,7 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
     duration = None
     try:
         from . import media
-        info = media.probe_video(video_path)
+        info = media.probe(video_path)
         duration = float(media.duration_ms(info)) / 1000.0
     except Exception:
         pass
@@ -80,13 +80,16 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
     temp_path = Path(temp_file.name)
     temp_file.close()
 
+    hwaccel_args = []
     vcodec_args = ["-c:v", "libx264", "-crf", "28", "-preset", "veryfast"]
     if platform.system() == "Darwin":
+        hwaccel_args = ["-hwaccel", "videotoolbox"]
         vcodec_args = ["-c:v", "h264_videotoolbox", "-b:v", "450k"]
 
     cmd = [
         ffmpeg,
         "-hide_banner", "-nostdin", "-y",
+        *hwaccel_args,
         "-i", str(video_path),
         "-map_metadata", "-1",
         "-map_chapters", "-1",
@@ -218,10 +221,27 @@ def scan_video_gemini(
             anon_name = f"scan_{os.urandom(4).hex()}"
             upload_config = types.UploadFileConfig(display_name=anon_name) if types else None
 
-            if upload_config:
-                uploaded_file = client.files.upload(file=str(upload_path), config=upload_config)
-            else:
-                uploaded_file = client.files.upload(file=str(upload_path))
+            t_upload_start = time.time()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                if upload_config:
+                    future = executor.submit(client.files.upload, file=str(upload_path), config=upload_config)
+                else:
+                    future = executor.submit(client.files.upload, file=str(upload_path))
+
+                while not future.done():
+                    time.sleep(0.5)
+                    elapsed = time.time() - t_upload_start
+                    # Smooth visual progress indicator while upload completes
+                    est_frac = min(0.95, elapsed / max(5.0, size_mb / 4.0))
+                    progress.set_custom_progress(
+                        f"Uploading video ({size_mb:.1f} MB)",
+                        fraction=est_frac,
+                        detail=f"{elapsed:.0f}s elapsed",
+                    )
+                uploaded_file = future.result()
+
+            progress.set_custom_progress("Uploaded video", fraction=1.0, detail="complete")
 
             progress.set_custom_progress("Processing on Google Cloud", fraction=0.25, detail="ingesting...")
             if report:
@@ -274,6 +294,7 @@ def scan_video_gemini(
             if report:
                 report(f"Sending prompt to {model} for whole-movie scan...")
 
+            gen_config = None
             if types and issubclass(BaseModel, object) and BaseModel is not object:
                 class TriggerItem(BaseModel):
                     start_time: str = Field(description="Start timestamp as HH:MM:SS or seconds")
@@ -309,16 +330,39 @@ def scan_video_gemini(
                     safety_settings=safety_settings,
                     temperature=0.0,
                 )
-                response = client.models.generate_content(
-                    model=model,
-                    contents=[uploaded_file, prompt_text],
-                    config=gen_config,
-                )
-            else:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=[uploaded_file, prompt_text],
-                )
+
+            def _call_gemini_with_retry(active_model):
+                delay = 5.0
+                for attempt in range(4):
+                    try:
+                        if gen_config:
+                            return client.models.generate_content(
+                                model=active_model,
+                                contents=[uploaded_file, prompt_text],
+                                config=gen_config,
+                            )
+                        else:
+                            return client.models.generate_content(
+                                model=active_model,
+                                contents=[uploaded_file, prompt_text],
+                            )
+                    except Exception as gen_err:
+                        err_msg = str(gen_err)
+                        is_transient = any(code in err_msg for code in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "demand"))
+                        if is_transient and attempt < 3:
+                            if report:
+                                report(f"Model {active_model} temporarily unavailable ({err_msg[:60]}...); retrying in {delay:.0f}s...")
+                            progress.set_custom_progress(f"Gemini busy, retrying", fraction=0.75, detail=f"retry in {delay:.0f}s")
+                            time.sleep(delay)
+                            delay *= 2
+                        elif is_transient and active_model != "gemini-3.7-flash":
+                            if report:
+                                report(f"Model {active_model} busy; falling back to gemini-3.7-flash...")
+                            return _call_gemini_with_retry("gemini-3.7-flash")
+                        else:
+                            raise
+
+            response = _call_gemini_with_retry(model)
 
             resp_text = getattr(response, "text", "") or ""
             try:

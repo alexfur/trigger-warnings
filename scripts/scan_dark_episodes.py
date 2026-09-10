@@ -45,7 +45,12 @@ def scan_episode(video_path):
     print(f"\n{'='*70}\nStarting Gemini scan for: {video_path.name}\n{'='*70}", flush=True)
     t0 = time.time()
     
-    exit_code = cli.main(argv)
+    try:
+        exit_code = cli.main(argv)
+    except Exception as exc:
+        print(f"\nError scanning {video_path.name}: {exc}\n", file=sys.stderr)
+        exit_code = 1
+
     elapsed = time.time() - t0
     print(f"\nFinished {video_path.name} in {elapsed:.1f}s (exit code {exit_code})\n", flush=True)
     return exit_code
