@@ -65,7 +65,7 @@ class ScanTests(unittest.TestCase):
         self.addCleanup(self.folder.cleanup)
         self.video = Path(self.folder.name) / "synthetic.mp4"
         self.video.touch()
-        self.backend = self.enter_patch("_load_backend", return_value=(mock.Mock(),) * 5)
+        self.backend = self.enter_patch("_load_backend", return_value=(mock.Mock(),) * 6)
         self.model_path = self.video.parent / "model"
         self.resolve = self.enter_patch("resolve_model", return_value=self.model_path)
         self.reader = mock.MagicMock()
@@ -141,7 +141,7 @@ class ScanTests(unittest.TestCase):
         self.assertNotIn("Scan complete", err.getvalue())
 
     def test_sigterm_cancels_inference_and_closes_video(self):
-        self.enter_patch("_answer", side_effect=lambda *args: signal.raise_signal(signal.SIGTERM))
+        self.enter_patch("_answer", side_effect=lambda *args, **kwargs: signal.raise_signal(signal.SIGTERM))
         original = signal.getsignal(signal.SIGTERM)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -150,6 +150,36 @@ class ScanTests(unittest.TestCase):
         self.assertIn("Scan cancelled", err.getvalue())
         self.assertEqual(signal.getsignal(signal.SIGTERM), original)
         self.reader_context.return_value.__exit__.assert_called_once()
+
+    def test_prompt_cache_state_passed_for_multi_trigger_scan(self):
+        answers = self.enter_patch("_answer", return_value=True)
+        # Replace the 6th backend return value (PromptCacheState) with a real
+        # class so each call() creates a distinct instance.
+        class FakeCacheState:
+            pass
+        backend_values = list(self.backend.return_value)
+        backend_values[5] = FakeCacheState
+        self.backend.return_value = tuple(backend_values)
+        vision.scan_video(self.video, ["red", "blue"])
+        # With 2 triggers, every _answer call should receive prompt_cache_state.
+        for call in answers.call_args_list:
+            self.assertIn("prompt_cache_state", call.kwargs)
+            self.assertIsNotNone(call.kwargs["prompt_cache_state"])
+            self.assertIsInstance(call.kwargs["prompt_cache_state"], FakeCacheState)
+        # Calls within the same chunk should share the same cache instance.
+        chunk_0_caches = [answers.call_args_list[i].kwargs["prompt_cache_state"]
+                          for i in range(2)]  # triggers 0,1 of chunk 0
+        self.assertIs(chunk_0_caches[0], chunk_0_caches[1])
+        # Different chunks should get different cache instances.
+        chunk_1_caches = [answers.call_args_list[i].kwargs["prompt_cache_state"]
+                          for i in range(2, 4)]  # triggers 0,1 of chunk 1
+        self.assertIs(chunk_1_caches[0], chunk_1_caches[1])
+        self.assertIsNot(chunk_0_caches[0], chunk_1_caches[0])
+
+    def test_prompt_cache_state_skipped_for_single_trigger_scan(self):
+        self.enter_patch("_answer", return_value=True)
+        vision.scan_video(self.video, ["red"])
+        # Single trigger: no cache overhead needed.
 
 
 class ModelCliTests(unittest.TestCase):

@@ -6,6 +6,12 @@ trying to parse free-form model prose into timestamps. A positive answer marks
 the complete chunk as a candidate event. This gives a useful first pass while
 making the timing uncertainty visible to the caller.
 
+Within each chunk, the KV cache from the first trigger's prefill is reused
+for every subsequent trigger via MLX-VLM's ``PromptCacheState``. The video
+frame tokens and shared prompt text are identical across triggers — only the
+short trigger-question suffix differs — so triggers 2–N skip the expensive
+vision prefill entirely.
+
 The dependency is optional. Importing :mod:`trigger_warnings` and every
 subtitle-only command continues to work without MLX-VLM installed.
 """
@@ -42,6 +48,7 @@ def _load_backend(model_path):
         from mlx_vlm import generate, load
         from mlx_vlm.prompt_utils import apply_chat_template
         from mlx_vlm.generate.video import processor_handles_video
+        from mlx_vlm.generate.common import PromptCacheState
     except ImportError as error:
         raise VisionError(
             "--model-trigger needs the optional local vision dependencies. "
@@ -66,10 +73,11 @@ def _load_backend(model_path):
         image_processor.size = {"longest_edge": 512}
         if hasattr(image_processor, "do_image_splitting"):
             image_processor.do_image_splitting = False
-    return mx, generate, apply_chat_template, model, processor
+    return mx, generate, apply_chat_template, model, processor, PromptCacheState
 
 
-def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, max_tokens, fps):
+def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, max_tokens, fps,
+            prompt_cache_state=None):
     prompt = (
         "This video clip covers {:.3f} to {:.3f} seconds. "
         "Its sampled frames are in chronological order at these video times: {}. "
@@ -83,15 +91,20 @@ def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, 
                           if model.config.model_type == "smolvlm" else
                           {"num_images": 0, "video": clip.source, "fps": fps})
         prompt = apply_chat_template(processor, model.config, prompt, **prompt_options)
-        result = generate(
-            model,
-            processor,
-            prompt,
+        generate_kwargs = dict(
             video=[clip.frames],
             fps=fps,
             max_tokens=max_tokens,
             temperature=0.0,
             verbose=False,
+        )
+        if prompt_cache_state is not None:
+            generate_kwargs["prompt_cache_state"] = prompt_cache_state
+        result = generate(
+            model,
+            processor,
+            prompt,
+            **generate_kwargs,
         )
         mx.synchronize()
     except Exception as error:
@@ -157,17 +170,22 @@ def scan_video(
             with contextlib.redirect_stderr(io.StringIO()):
                 model_path = resolve_model(model, revision=revision, local_only=local_only)
             progress.set_stage("Loading model")
-            mx, generate, apply_chat_template, loaded_model, processor = _load_backend(model_path)
+            mx, generate, apply_chat_template, loaded_model, processor, PromptCacheState = _load_backend(model_path)
             events = []
             for number in range(chunks):
                 progress.start_chunk(number)
                 start = number * chunk_seconds
                 end = min(duration, start + chunk_seconds)
                 clip = reader.read_clip(start, end)
+                # A fresh cache per chunk: within the chunk every trigger
+                # shares the same video-frame prefix so the KV prefill from
+                # trigger 1 is reused for triggers 2–N.
+                cache_state = PromptCacheState() if len(triggers) > 1 else None
                 for trigger_idx, trigger in enumerate(triggers):
                     progress.start_trigger(trigger_idx, trigger)
                     if _answer(generate, apply_chat_template, loaded_model, processor, mx,
-                               clip, trigger.strip(), max_tokens, fps):
+                               clip, trigger.strip(), max_tokens, fps,
+                               prompt_cache_state=cache_state):
                         events.append({
                             "start": round(start, 3),
                             "end": round(end, 3),
@@ -175,7 +193,7 @@ def scan_video(
                             "severity": "model-candidate",
                         })
                     progress.finish_trigger()
-                del clip
+                del clip, cache_state
         if not events:
             raise VisionError(
                 "the model found no candidate events. This does not establish that "
