@@ -84,6 +84,13 @@ class ProgressBar:
             self.stage = stage
         self._draw(event="stage", force=True)
 
+    def set_custom_progress(self, stage, fraction=None, detail=""):
+        with self._lock:
+            self.stage = stage
+            self.custom_fraction = fraction
+            self.custom_detail = detail
+        self._draw(event="progress", force=True)
+
     def start_chunk(self, chunk_idx):
         with self._lock:
             if self.scan_start is None:
@@ -173,8 +180,11 @@ class ProgressBar:
                 and now - self._last_draw < self.interval):
             return
         self._last_draw = now
-        total = self.total_chunks * self.total_triggers
-        fraction = self.completed / total if total else 0
+        if getattr(self, "custom_fraction", None) is not None:
+            fraction = max(0.0, min(1.0, float(self.custom_fraction)))
+        else:
+            total = self.total_chunks * self.total_triggers
+            fraction = self.completed / total if total else 0
         elapsed = now - self.start_time
         if self.json_progress:
             self.stream.write(json.dumps({
@@ -193,7 +203,10 @@ class ProgressBar:
             bar = "#" * filled + "-" * (width - filled)
             spinner = "|/-\\"[int(elapsed * 5) % 4] if not final else " "
             line = f"{spinner} [{bar}] {fraction * 100:5.1f}% {self.stage} | {elapsed:.0f}s"
-            if self.current_chunk:
+            custom_detail = getattr(self, "custom_detail", "")
+            if custom_detail:
+                line += f" | {custom_detail}"
+            elif self.current_chunk:
                 line += f" | chunk {self.current_chunk}/{self.total_chunks}"
             if self.completed and not final:
                 eta = (now - self.scan_start) / self.completed * (total - self.completed)

@@ -102,7 +102,7 @@ def test_scan_video_gemini_mock_flow(tmp_path):
     assert scan.events[0]["label"] == "eyes"
     assert scan.events[0]["start"] == 83.5
     assert scan.events[0]["end"] == 90.0
-    assert "needle" in scan.events[0]["description"]
+    assert any("needle" in line for line in report_lines)
     assert scan.metadata["kind"] == "gemini-cloud-model"
     assert scan.metadata["provider"] == "google-gemini"
 
