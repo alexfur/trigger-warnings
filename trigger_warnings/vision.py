@@ -114,12 +114,22 @@ def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, 
         ) from error
     text = str(getattr(result, "text", "")).strip()
     match = _YES_NO.fullmatch(text)
-    if match is None:
-        raise VisionError(
-            "vision model returned an unusable answer for trigger {!r}: {!r}; "
-            "the scan stopped rather than treating it as a no".format(trigger, text)
-        )
-    return match.group(1).casefold() == "yes"
+    if match is not None:
+        return match.group(1).casefold() == "yes"
+
+    # Some small models (e.g. 500M) respond by naming the confirmed trigger or
+    # echoing key descriptor words (e.g. 'eyeball trauma.') instead of 'yes'.
+    # Treat explicit trigger affirmations as positive detections.
+    clean_text = text.strip(" .!?:;\"'").casefold()
+    target_words = {w for w in re.split(r"\W+", question.casefold()) if len(w) > 3}
+    ans_words = {w for w in re.split(r"\W+", clean_text) if len(w) > 3}
+    if target_words and ans_words and (clean_text == trigger.casefold() or ans_words.issubset(target_words)):
+        return True
+
+    raise VisionError(
+        "vision model returned an unusable answer for trigger {!r}: {!r}; "
+        "the scan stopped rather than treating it as a no".format(trigger, text)
+    )
 
 
 def scan_video(

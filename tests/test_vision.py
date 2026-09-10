@@ -28,6 +28,11 @@ class AnswerTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIs(self.answer(text), expected)
 
+    def test_accepts_trigger_or_descriptor_affirmation(self):
+        for text in ["red rectangle", "Red Rectangle.", "rectangle"]:
+            with self.subTest(text=text):
+                self.assertTrue(self.answer(text))
+
     def test_uncertain_or_truncated_answers_are_errors(self):
         for text in ["", "maybe", "yes and no", "No, but I cannot tell", "y"]:
             with self.subTest(text=text):
