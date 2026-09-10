@@ -36,6 +36,9 @@ vision = [
     "torchvision>=0.29,<0.30",
     "av>=14,<17",
 ]
+gemini = [
+    "google-genai>=2.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/alexfur/trigger-warnings"

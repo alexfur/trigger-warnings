@@ -157,7 +157,8 @@ class HydrateTests(unittest.TestCase):
         """The wizard, the hydrator and --save must not drift apart."""
         self.assertEqual(
             {"DDD_API_KEY", "OPENSUBTITLES_API_KEY",
-             "OPENSUBTITLES_USERNAME", "OPENSUBTITLES_PASSWORD"},
+             "OPENSUBTITLES_USERNAME", "OPENSUBTITLES_PASSWORD",
+             "GEMINI_API_KEY"},
             set(keychain.VARIABLES))
 
 

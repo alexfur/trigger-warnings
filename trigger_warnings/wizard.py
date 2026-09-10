@@ -34,7 +34,8 @@ from .core import TriggerWarningsError
 
 SOURCE_DTDD = "dtdd"
 SOURCE_MODEL = "model"
-SOURCES = [SOURCE_DTDD, SOURCE_MODEL]
+SOURCE_GEMINI = "gemini"
+SOURCES = [SOURCE_DTDD, SOURCE_MODEL, SOURCE_GEMINI]
 
 SUBTITLE_FILE = "file"
 SUBTITLE_OPENSUBTITLES = "opensubtitles"
@@ -430,6 +431,7 @@ def prompt_source_selection(prompter, report=None, environ=None, video_path=None
     choices = [
         (SOURCE_DTDD, "DoesTheDogDie (DTDD) - official API with community timestamps"),
         (SOURCE_MODEL, "Local model - scan video with local vision model"),
+        (SOURCE_GEMINI, "Google Gemini - cloud whole-movie analysis (~2 min, fast & accurate)"),
     ]
     selected = _prompt_choice(prompter, "Select trigger source:", choices, default=SOURCE_DTDD)
 
@@ -496,6 +498,56 @@ def prompt_source_selection(prompter, report=None, environ=None, video_path=None
             "source": SOURCE_DTDD,
             "ddd_item": item_id,
             "category": categories,
+        }
+
+    elif selected == SOURCE_GEMINI:
+        if not video_path:
+            v_input = prompter.text("Path to video file: ").strip()
+            if not v_input:
+                raise TriggerWarningsError("A video file is required for Gemini cloud scanning.")
+            video_path = Path(v_input)
+        else:
+            video_path = Path(video_path)
+
+        api_key = environ.get("GEMINI_API_KEY") or ""
+        if not api_key.strip():
+            key_input = prompter.secret(
+                "Google Gemini API key (hidden, Enter to skip if in keychain): "
+            ).strip()
+            if key_input:
+                environ["GEMINI_API_KEY"] = key_input
+                api_key = key_input
+
+        triggers_input = prompter.text(
+            "Enter trigger labels to detect (comma-separated, e.g. 'eyes, nails, teeth'): "
+        ).strip()
+        triggers = [t.strip() for t in triggers_input.split(",") if t.strip()]
+        if not triggers:
+            raise TriggerWarningsError("At least one trigger label is required for Gemini cloud scanning.")
+
+        desc_input = prompter.text(
+            "Trigger descriptors (optional, format LABEL=DESCRIPTION, Enter to skip): "
+        ).strip()
+        descriptors = [desc_input] if desc_input else []
+
+        model_name = prompter.text(
+            "Gemini model (Enter for default 'gemini-2.0-flash'): "
+        ).strip() or "gemini-2.0-flash"
+
+        sanitize_ans = prompter.text(
+            "Sanitize video locally before upload (strip tags, downscale to 480p)? [Y/n]: "
+        ).strip().lower()
+        no_sanitize = sanitize_ans in ("n", "no")
+
+        return {
+            "source": SOURCE_GEMINI,
+            "provider": "gemini",
+            "video": video_path,
+            "model_trigger": triggers,
+            "model_trigger_desc": descriptors,
+            "gemini_model": model_name,
+            "gemini_api_key": api_key or None,
+            "no_gemini_sanitize": no_sanitize,
         }
 
     else:  # SOURCE_MODEL
@@ -768,6 +820,10 @@ def run_wizard(prompter, report=None, environ=None, initial_args=None,
             report("  Trigger source: DoesTheDogDie item {}".format(source_info["ddd_item"]))
             if source_info.get("category"):
                 report("  Categories: {}".format(", ".join(source_info["category"])))
+        elif source_info["source"] == SOURCE_GEMINI:
+            report("  Trigger source: Google Gemini ({}) on {}".format(
+                source_info.get("gemini_model", "gemini-2.0-flash"), source_info["video"]))
+            report("  Triggers: {}".format(", ".join(source_info.get("model_trigger", []))))
         else:
             report("  Trigger source: Local model on {}".format(source_info["video"]))
             report("  Triggers: {}".format(", ".join(source_info.get("model_trigger", []))))
@@ -803,6 +859,14 @@ def run_wizard(prompter, report=None, environ=None, initial_args=None,
     if source_info["source"] == SOURCE_DTDD:
         args.ddd_item = source_info["ddd_item"]
         args.category = source_info.get("category", [])
+    elif source_info["source"] == SOURCE_GEMINI:
+        args.video = source_info["video"]
+        args.provider = "gemini"
+        args.model_trigger = source_info.get("model_trigger", [])
+        args.model_trigger_desc = source_info.get("model_trigger_desc", [])
+        args.gemini_model = source_info.get("gemini_model", "gemini-2.0-flash")
+        args.gemini_api_key = source_info.get("gemini_api_key")
+        args.no_gemini_sanitize = source_info.get("no_gemini_sanitize", False)
     elif source_info["source"] == SOURCE_MODEL:
         args.video = source_info["video"]
         args.model_trigger = source_info.get("model_trigger", [])

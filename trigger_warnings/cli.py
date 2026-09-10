@@ -337,6 +337,22 @@ def build_parser():
         help="replace the live scan bar with JSON progress lines on stderr",
     )
     parser.add_argument(
+        "--provider", choices=["local", "gemini"], default="local",
+        help="scanning provider: 'local' (default, Apple Silicon MLX) or 'gemini' (Google Cloud Gemini)",
+    )
+    parser.add_argument(
+        "--gemini-api-key", metavar="KEY",
+        help="Google AI Studio API key for --provider gemini (falls back to GEMINI_API_KEY environment variable)",
+    )
+    parser.add_argument(
+        "--gemini-model", default="gemini-2.0-flash", metavar="MODEL",
+        help="Gemini model for --provider gemini (default: gemini-2.0-flash)",
+    )
+    parser.add_argument(
+        "--no-gemini-sanitize", action="store_true",
+        help="skip local FFmpeg metadata stripping and downscaling before upload to Gemini",
+    )
+    parser.add_argument(
         "--os-search", metavar="TITLE",
         help="search OpenSubtitles for a dialogue track; choose a file id "
              "before downloading",
@@ -804,20 +820,50 @@ def _load_model_events(args, report, triggers=None):
 
     effective_triggers = args.model_trigger if triggers is None else triggers
     descs = _parse_trigger_descriptors(args.model_trigger_desc, effective_triggers)
-    scan = vision.scan_video(
-        args.video,
-        effective_triggers,
-        model=args.model or vision.DEFAULT_MODEL,
-        revision=args.model_revision,
-        local_only=args.model_local_only,
-        fps=args.model_fps,
-        chunk_seconds=args.model_chunk,
-        width=args.model_width,
-        max_tokens=args.model_max_tokens,
-        trigger_descriptors=descs or None,
-        report=report,
-        json_progress=args.progress_json,
-    )
+
+    if getattr(args, "provider", "local") == "gemini":
+        from . import gemini
+        try:
+            scan = gemini.scan_video_gemini(
+                args.video,
+                effective_triggers,
+                api_key=args.gemini_api_key,
+                model=args.gemini_model,
+                trigger_descriptors=descs or None,
+                report=report,
+                json_progress=args.progress_json,
+                sanitize=not args.no_gemini_sanitize,
+            )
+        except gemini.GeminiError as error:
+            raise TriggerWarningsError(str(error)) from error
+        report(
+            "Gemini cloud model found {} candidate event{}.".format(
+                len(scan.events),
+                "" if len(scan.events) == 1 else "s",
+            )
+        )
+        for note in scan.notes:
+            report(note)
+        return scan
+
+    from . import vision
+    try:
+        scan = vision.scan_video(
+            args.video,
+            effective_triggers,
+            model=args.model or vision.DEFAULT_MODEL,
+            revision=args.model_revision,
+            local_only=args.model_local_only,
+            fps=args.model_fps,
+            chunk_seconds=args.model_chunk,
+            width=args.model_width,
+            max_tokens=args.model_max_tokens,
+            trigger_descriptors=descs or None,
+            report=report,
+            json_progress=args.progress_json,
+        )
+    except vision.VisionError as error:
+        raise TriggerWarningsError(str(error)) from error
     report(
         "Local model found {} candidate event{} in {} chunk{}.".format(
             len(scan.events),
@@ -1121,6 +1167,10 @@ def _reject_os_flags(args, mode, allowed):
         ("--model-width", args.model_width, 384),
         ("--model-max-tokens", args.model_max_tokens, 16),
         ("--progress-json", args.progress_json, False),
+        ("--provider", args.provider, "local"),
+        ("--gemini-api-key", args.gemini_api_key, None),
+        ("--gemini-model", args.gemini_model, "gemini-2.0-flash"),
+        ("--no-gemini-sanitize", args.no_gemini_sanitize, False),
         ("--os-search", args.os_search, None),
         ("--os-file", args.os_file, None),
         ("--os-api-key", args.os_api_key, None),
@@ -1431,7 +1481,7 @@ def _run_wizard(args, report, result, prompter=None):
     if args.json_output:
         result.update({
             "mode": "wizard",
-            "sources": [wizard.SOURCE_DTDD, wizard.SOURCE_MODEL],
+            "sources": list(wizard.SOURCES),
             "subtitles": [
                 wizard.SUBTITLE_FILE,
                 wizard.SUBTITLE_OPENSUBTITLES,
@@ -1637,9 +1687,30 @@ def run(args, report, result=None, setup_prompter=None):
             ("--model-max-tokens", args.model_max_tokens, 16),
             ("--model-trigger-desc", args.model_trigger_desc, []),
             ("--progress-json", args.progress_json, False),
+            ("--provider", args.provider, "local"),
+            ("--gemini-api-key", args.gemini_api_key, None),
+            ("--gemini-model", args.gemini_model, "gemini-2.0-flash"),
+            ("--no-gemini-sanitize", args.no_gemini_sanitize, False),
         ):
             if value is not None and _was_supplied(args, flag, value, default):
                 raise TriggerWarningsError("{} needs --model-trigger".format(flag))
+    else:
+        if args.provider == "local":
+            if _was_supplied(args, "--gemini-api-key", args.gemini_api_key, None):
+                raise TriggerWarningsError("--gemini-api-key is only valid with --provider gemini")
+            if _was_supplied(args, "--no-gemini-sanitize", args.no_gemini_sanitize, False):
+                raise TriggerWarningsError("--no-gemini-sanitize is only valid with --provider gemini")
+        elif args.provider == "gemini":
+            for flag, value, default in (
+                ("--model-fps", args.model_fps, 1.0),
+                ("--model-chunk", args.model_chunk, 10.0),
+                ("--model-width", args.model_width, 384),
+                ("--model-max-tokens", args.model_max_tokens, 16),
+                ("--model-local-only", args.model_local_only, False),
+                ("--model-revision", args.model_revision, None),
+            ):
+                if _was_supplied(args, flag, value, default):
+                    raise TriggerWarningsError("{} is not supported with --provider gemini".format(flag))
     if args.dry_run and args.verify is not None:
         raise TriggerWarningsError("--dry-run cannot render --verify; it writes no files")
     if args.dry_run and args.provenance is not None:
@@ -1692,7 +1763,7 @@ def run(args, report, result=None, setup_prompter=None):
         ddd_source = _load_ddd_events(args, report)
         model_triggers = _ddd_trigger_labels(ddd_source, args.category)
         model_source = _load_model_events(args, report, model_triggers)
-        events = core.load_events(json.dumps(model_source.events), "local model scan")
+        events = core.load_events(json.dumps(model_source.events), f"{args.provider} model scan")
         model_source.metadata["triggerSource"] = {
             "kind": "does-the-dog-die-labels",
             "itemId": args.ddd_item,
@@ -1704,7 +1775,7 @@ def run(args, report, result=None, setup_prompter=None):
         events = ddd_source.events
     elif args.model_trigger:
         model_source = _load_model_events(args, report)
-        events = core.load_events(json.dumps(model_source.events), "local model scan")
+        events = core.load_events(json.dumps(model_source.events), f"{args.provider} model scan")
     else:
         events = core.load_events(
             _read_text(args.events, "--events"), str(args.events)

@@ -181,12 +181,42 @@ measures SmolVLM2 on synthetic footage, not Qwen or real trigger-detection accur
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--model-trigger-desc` | Unspecified | Prompt description for a trigger (`LABEL=DESC`) to reduce false positives |
-| `--model-fps` | `1` | Frames sampled per second |
-| `--model-chunk` | `10` | Video seconds checked per chunk |
-| `--model-width` | `384` | Extracted frame width in pixels |
-| `--model-max-tokens` | `16` | Maximum length of each model answer |
-| `--model-revision` | Unspecified | Pin a model revision |
+| `--provider` | `local` | Scanning provider: `local` (offline Apple Silicon MLX) or `gemini` (Google Cloud) |
+| `--gemini-api-key` | Env var | Google AI Studio API key (falls back to `GEMINI_API_KEY`) |
+| `--gemini-model` | `gemini-2.0-flash` | Gemini model for cloud scanning |
+| `--no-gemini-sanitize` | Off | Skip local FFmpeg metadata stripping and downscaling before upload |
+| `--model-fps` | `1` | Frames sampled per second (local model) |
+| `--model-chunk` | `10` | Video seconds checked per chunk (local model) |
+| `--model-width` | `384` | Extracted frame width in pixels (local model) |
+| `--model-max-tokens` | `16` | Maximum length of each model answer (local model) |
+| `--model-revision` | Unspecified | Pin a model revision (local model) |
 | `--progress-json` | Off | Emit structured progress on stderr |
+
+### 4. Cloud scanning with Google Gemini (~2 min whole-movie scan)
+
+For whole-movie analysis in ~2 minutes instead of 25–35 minutes locally, use the Google Gemini cloud provider:
+
+```bash
+pip install 'trigger-warnings[gemini]'
+export GEMINI_API_KEY="your-api-key"
+```
+
+Scan using `--provider gemini`:
+
+```bash
+trigger-warnings \
+  --video "movie.mkv" \
+  --provider gemini \
+  --model-trigger 'eyes' \
+  --model-trigger-desc 'eyes=an attack, gouging, blinding, or severe physical injury to someone'\''s eye' \
+  --output "movie.warnings.ass"
+```
+
+**Privacy & Guardrails:**
+- **Local metadata stripping:** FFmpeg automatically strips container metadata, rip tags, and chapter titles before upload.
+- **Hardware downscale:** Re-encodes locally to 480p to reduce file size by ~80% for fast upload (~20s).
+- **Randomized filename:** Uploads to Google's File API under a randomized hash name.
+- **Guaranteed cleanup:** Automatically deletes the remote file from Google servers immediately after the scan completes.
 
 ## Supply your own timestamps
 

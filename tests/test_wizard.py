@@ -472,13 +472,34 @@ class InteractiveWizardTests(unittest.TestCase):
         )
         self.assertIsNone(args)
 
+    def test_prompt_source_gemini(self):
+        prompter = SequencePrompter(
+            texts=[
+                "3",  # choose Gemini
+                "video.mp4",
+                "eyes, nails",
+                "eyes=severe trauma",
+                "gemini-2.0-flash",
+                "y",  # sanitize
+            ],
+            secrets=["fake-gemini-key"],
+        )
+        res = wizard.prompt_source_selection(prompter, environ={})
+        self.assertEqual(wizard.SOURCE_GEMINI, res["source"])
+        self.assertEqual("gemini", res["provider"])
+        self.assertEqual(["eyes", "nails"], res["model_trigger"])
+        self.assertEqual(["eyes=severe trauma"], res["model_trigger_desc"])
+        self.assertEqual("gemini-2.0-flash", res["gemini_model"])
+        self.assertEqual("fake-gemini-key", res["gemini_api_key"])
+        self.assertFalse(res["no_gemini_sanitize"])
+
     def test_cli_wizard_json_reports_mode_and_capabilities(self):
         args = cli.build_parser().parse_args(["--wizard", "--json"])
         result = {}
         status = cli.run(args, lambda *unused, **unused_kwargs: None, result)
         self.assertEqual(cli.EXIT_OK, status)
         self.assertEqual("wizard", result["mode"])
-        self.assertEqual([wizard.SOURCE_DTDD, wizard.SOURCE_MODEL], result["sources"])
+        self.assertEqual(list(wizard.SOURCES), result["sources"])
         self.assertEqual(
             [wizard.SUBTITLE_FILE, wizard.SUBTITLE_OPENSUBTITLES, wizard.SUBTITLE_EMBEDDED],
             result["subtitles"],
