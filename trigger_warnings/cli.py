@@ -373,7 +373,15 @@ def build_parser():
     )
     parser.add_argument(
         "--output", type=Path, metavar="PATH",
-        help="new .ass or .srt file to create; required for generation",
+        help="new .ass or .srt file to create; required unless --warnings-output is used",
+    )
+    parser.add_argument(
+        "--warnings-output", type=Path, metavar="PATH",
+        help="new .ass or .srt file with trigger warnings only; can be combined with --output",
+    )
+    parser.add_argument(
+        "--warnings-only", action="store_true",
+        help="generate only trigger warnings into --output; does not merge or require dialogue subtitles",
     )
     parser.add_argument(
         "--category", action="append", default=[], metavar="LABEL",
@@ -422,6 +430,10 @@ def build_parser():
     parser.add_argument(
         "--provenance", type=Path, metavar="PATH",
         help="new JSON sidecar recording source and generation details",
+    )
+    parser.add_argument(
+        "--wizard", action="store_true",
+        help="interactive guided wizard for source and subtitle selection",
     )
     parser.add_argument(
         "--setup", action="store_true",
@@ -897,7 +909,8 @@ def _provenance_payload(args, source, kept, dropped, windows, dialogue, notes):
         "schemaVersion": 1,
         "generatedAt": _utc_timestamp(),
         "source": source,
-        "output": str(args.output),
+        "output": str(args.output) if args.output is not None else None,
+        "warningsOutput": str(args.warnings_output) if getattr(args, "warnings_output", None) is not None else None,
         "video": str(args.video) if args.video is not None else None,
         "categories": {
             "requested": list(args.category),
@@ -1087,6 +1100,8 @@ def _reject_os_flags(args, mode, allowed):
         ("--subtitles", args.subtitles, None),
         ("--events", args.events, None),
         ("--output", args.output, None),
+        ("--warnings-output", args.warnings_output, None),
+        ("--warnings-only", args.warnings_only, False),
         ("--video", args.video, None),
         ("--stream", args.stream, None),
         ("--verify", args.verify, None),
@@ -1120,6 +1135,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--dry-run", args.dry_run, False),
         ("--list-streams", args.list_streams, False),
         ("--setup", args.setup, False),
+        ("--wizard", args.wizard, False),
         ("--save", args.save, False),
         ("--forget", args.forget, False),
         ("--language", args.language, _DEFAULT_LANGUAGE),
@@ -1410,10 +1426,50 @@ def _run_setup(args, report, result, prompter=None):
     return EXIT_OK
 
 
+def _run_wizard(args, report, result, prompter=None):
+    prompter = prompter or wizard.SetupPrompter(environ=os.environ)
+    if args.json_output:
+        result.update({
+            "mode": "wizard",
+            "sources": [wizard.SOURCE_DTDD, wizard.SOURCE_MODEL],
+            "subtitles": [
+                wizard.SUBTITLE_FILE,
+                wizard.SUBTITLE_OPENSUBTITLES,
+                wizard.SUBTITLE_EMBEDDED,
+            ],
+            "ready": True,
+            "filesWritten": [],
+        })
+        return EXIT_OK
+
+    if not prompter.interactive:
+        raise TriggerWarningsError(
+            "--wizard requires an interactive terminal; run it without piping, "
+            "or pass options directly."
+        )
+
+    wizard_args = wizard.run_wizard(
+        prompter, report=report, environ=os.environ, initial_args=args
+    )
+    if wizard_args is None:
+        return EXIT_OK
+    wizard_args.credential_sources = getattr(args, "credential_sources", {})
+    wizard_args.json_output = getattr(args, "json_output", False)
+    return run(wizard_args, report, result, setup_prompter=prompter)
+
+
 def run(args, report, result=None, setup_prompter=None):
     """Run one command and optionally fill a machine-readable result mapping."""
     if result is None:
         result = {}
+
+    if args.wizard:
+        _reject_os_flags(
+            args,
+            "--wizard runs the interactive guided selection wizard",
+            allowed=("--wizard", "--video", "--subtitles", "--output", "--dry-run"),
+        )
+        return _run_wizard(args, report, result, prompter=setup_prompter)
 
     if args.setup:
         _reject_os_flags(
@@ -1432,7 +1488,9 @@ def run(args, report, result=None, setup_prompter=None):
     if args.list_streams:
         if args.video is None:
             raise TriggerWarningsError("--list-streams needs --video")
-        for flag, value in (("--output", args.output), ("--verify", args.verify),
+        for flag, value in (("--output", args.output),
+                            ("--warnings-output", args.warnings_output),
+                            ("--verify", args.verify),
                             ("--events", args.events), ("--ddd-item", args.ddd_item),
                             ("--ddd-api-key", args.ddd_api_key),
                             ("--ddd-search", args.ddd_search),
@@ -1449,6 +1507,10 @@ def run(args, report, result=None, setup_prompter=None):
                     "--list-streams does not generate output; run it without "
                     "{}".format(flag)
                 )
+        if args.warnings_only:
+            raise TriggerWarningsError(
+                "--list-streams does not generate output; run it without --warnings-only"
+            )
         for flag, value in (("--model-trigger", args.model_trigger),
                             ("--model-trigger-desc", args.model_trigger_desc),
                             ("--model-from-ddd", args.model_from_ddd),
@@ -1526,8 +1588,15 @@ def run(args, report, result=None, setup_prompter=None):
     if args.ddd_year is not None:
         raise TriggerWarningsError("--ddd-year needs --ddd-search")
 
-    if args.output is None and not args.dry_run:
-        raise TriggerWarningsError("--output is required")
+    if args.warnings_only and args.output is None:
+        raise TriggerWarningsError("--warnings-only needs --output")
+    if args.warnings_only and args.warnings_output is not None:
+        raise TriggerWarningsError(
+            "--warnings-only and --warnings-output cannot be combined; use "
+            "--output with --warnings-only, or supply --warnings-output"
+        )
+    if args.output is None and args.warnings_output is None and not args.dry_run:
+        raise TriggerWarningsError("--output or --warnings-output is required")
     model_requested = bool(args.model_trigger or args.model_from_ddd)
     source_modes = sum(bool(value) for value in (
         args.events is not None,
@@ -1587,6 +1656,15 @@ def run(args, report, result=None, setup_prompter=None):
             raise TriggerWarningsError(
                 "--output must end in .ass or .srt, got {!r}".format(args.output.name)
             )
+    warn_suffix = None
+    if args.warnings_output is not None:
+        warn_suffix = args.warnings_output.suffix.lower()
+        if warn_suffix not in (".ass", ".srt"):
+            raise TriggerWarningsError(
+                "--warnings-output must end in .ass or .srt, got {!r}".format(
+                    args.warnings_output.name
+                )
+            )
     if args.verify is not None and args.verify.suffix.lower() != ".png":
         raise TriggerWarningsError(
             "--verify writes a PNG, so its path must end in .png, got {!r}".format(
@@ -1601,7 +1679,9 @@ def run(args, report, result=None, setup_prompter=None):
     # job is to answer "would this work?" the one command that could answer yes
     # and then fail on the very next invocation, at the write.
     _check_publication_targets(
-        [("--output", args.output), ("--verify", args.verify),
+        [("--output", args.output),
+         ("--warnings-output", args.warnings_output),
+         ("--verify", args.verify),
          ("--provenance", args.provenance)],
         inputs,
     )
@@ -1632,8 +1712,40 @@ def run(args, report, result=None, setup_prompter=None):
     kept, dropped = core.select_events(events, args.category)
     _report_categories(kept, dropped, report)
 
-    subtitle_text, duration_ms, media, _info = _obtain_subtitles(args, report)
-    dialogue = core.parse_srt(subtitle_text, str(args.subtitles or args.video))
+    warnings_mode_only = args.warnings_only or (args.warnings_output is not None and args.output is None)
+    need_dialogue = not warnings_mode_only
+    if need_dialogue:
+        subtitle_text, duration_ms, media, _info = _obtain_subtitles(args, report)
+        dialogue = core.parse_srt(subtitle_text, str(args.subtitles or args.video))
+    else:
+        if args.subtitles is not None:
+            if args.warnings_only:
+                raise TriggerWarningsError(
+                    "--subtitles was supplied with --warnings-only. Drop "
+                    "--subtitles; warnings-only output contains no dialogue."
+                )
+            raise TriggerWarningsError(
+                "--subtitles was supplied, but --warnings-output produces a track "
+                "with no dialogue. Drop --subtitles, or supply --output to "
+                "generate the merged track as well."
+            )
+        if args.stream is not None:
+            raise TriggerWarningsError(
+                "--stream was supplied, but the output contains no dialogue. "
+                "Drop --stream."
+            )
+        if _was_supplied(args, "--language", args.language, _DEFAULT_LANGUAGE):
+            raise TriggerWarningsError(
+                "--language was supplied, but the output contains no dialogue. "
+                "Drop --language."
+            )
+        dialogue = []
+        duration_ms = None
+        media = None
+        if args.video is not None:
+            media = _load_media()
+            info = media.probe(args.video)
+            duration_ms = media.duration_ms(info)
 
     windows, notes = core.build_windows(
         kept,
@@ -1645,15 +1757,17 @@ def run(args, report, result=None, setup_prompter=None):
     if model_source is not None:
         notes = list(model_source.notes) + list(notes)
     cues = core.merge_cues(dialogue, windows)
+    warn_cues = core.warning_cues(windows)
     source = _source_metadata(args, model_source or ddd_source)
 
     result.update({
         "mode": "dry-run" if args.dry_run else ("model-scan" if model_requested else "generate"),
         "source": source,
-        # The three named targets are reported whether or not they were asked
+        # The named targets are reported whether or not they were asked
         # for, so a caller reads one shape in every mode. ``filesWritten`` is
         # the fact: it stays empty until publication has actually happened.
         "output": str(args.output) if args.output is not None else None,
+        "warningsOutput": str(args.warnings_output) if args.warnings_output is not None else None,
         "preview": str(args.verify) if args.verify is not None else None,
         "provenance": str(args.provenance) if args.provenance is not None else None,
         "filesWritten": [],
@@ -1676,19 +1790,32 @@ def run(args, report, result=None, setup_prompter=None):
         report("Dry run complete. No files were written.")
         return EXIT_OK
 
-    subtitle_output = core.render(cues, suffix, notes)
-    payload = subtitle_output.encode("utf-8")
+    targets = []
+    output_text = None
+    warn_output_text = None
 
-    targets = [(args.output, payload)]
+    if args.output is not None:
+        output_cues = warn_cues if args.warnings_only else cues
+        output_text = core.render(output_cues, suffix, notes)
+        targets.append((args.output, output_text.encode("utf-8")))
+
+    if args.warnings_output is not None:
+        warn_output_text = core.render(warn_cues, warn_suffix, notes)
+        targets.append((args.warnings_output, warn_output_text.encode("utf-8")))
+
     if args.verify is not None:
-        target_ms = core.verify_target_ms(cues, duration_ms)
+        preview_text = output_text if output_text is not None else warn_output_text
+        preview_suffix = suffix if suffix is not None else warn_suffix
+        verify_cues = cues if (args.output and not args.warnings_only) else warn_cues
+        target_ms = core.verify_target_ms(verify_cues, duration_ms)
         # verify_frame returns the PNG bytes and writes nothing, so a failed
         # render cannot leave a preview behind or an unchecked output file.
-        png = media.verify_frame(args.video, subtitle_output, suffix, target_ms)
+        png = media.verify_frame(args.video, preview_text, preview_suffix, target_ms)
         if not png:
             raise TriggerWarningsError("the preview render produced no image data")
         targets.append((args.verify, png))
         report("Rendered a preview frame at {:.3f}s.".format(target_ms / 1000.0))
+
     if args.provenance is not None:
         targets.append((args.provenance, _provenance_payload(
             args, source, kept, dropped, windows, dialogue, notes
@@ -1696,7 +1823,10 @@ def run(args, report, result=None, setup_prompter=None):
 
     result["filesWritten"] = [str(path) for path in publish(targets)]
 
-    report("Wrote {}.".format(args.output))
+    if args.output is not None:
+        report("Wrote {}.".format(args.output))
+    if args.warnings_output is not None:
+        report("Wrote {}.".format(args.warnings_output))
     if args.verify is not None:
         report("Wrote {}. {}".format(args.verify, _RENDER_CAVEAT))
     if args.provenance is not None:

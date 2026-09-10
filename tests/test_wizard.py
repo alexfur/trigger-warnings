@@ -339,5 +339,197 @@ class PromptTests(unittest.TestCase):
             isatty=lambda: True, environ={"TERM": "dumb"}).colour)
 
 
+class SequencePrompter(wizard.SetupPrompter):
+    def __init__(self, texts=None, secrets=None, interactive=True, environ=None):
+        self._texts = iter(texts or [])
+        self._secrets = iter(secrets or [])
+        self._is_interactive = interactive
+        super().__init__(
+            input_fn=lambda prompt: next(self._texts, ""),
+            secret_fn=lambda prompt: next(self._secrets, ""),
+            isatty=lambda: self._is_interactive,
+            environ=environ or {},
+        )
+
+
+class InteractiveWizardTests(unittest.TestCase):
+    def test_choose_by_number_and_key_and_default(self):
+        prompter = SequencePrompter(texts=["1", "model", ""])
+        choices = [
+            (wizard.SOURCE_DTDD, "DoesTheDogDie (DTDD)"),
+            (wizard.SOURCE_MODEL, "Local model"),
+        ]
+        self.assertEqual(wizard.SOURCE_DTDD, prompter.choose("Select:", choices))
+        self.assertEqual(wizard.SOURCE_MODEL, prompter.choose("Select:", choices))
+        self.assertEqual(wizard.SOURCE_DTDD, prompter.choose("Select:", choices, default=wizard.SOURCE_DTDD))
+
+    def test_source_selection_dtdd_search(self):
+        prompter = SequencePrompter(texts=["1", "Jaws", "1975", "1", "violence"])
+        def fake_search(key, title, year=None):
+            return [{"id": 10154, "name": "Jaws", "releaseYear": 1975}]
+
+        res = wizard.prompt_source_selection(
+            prompter, environ={wizard.DDD_KEY_VARIABLE: _FAKE_DDD_KEY},
+            ddd_search_fn=fake_search,
+        )
+        self.assertEqual(wizard.SOURCE_DTDD, res["source"])
+        self.assertEqual(10154, res["ddd_item"])
+        self.assertEqual(["violence"], res["category"])
+
+    def test_source_selection_dtdd_direct_id(self):
+        prompter = SequencePrompter(texts=["dtdd", "10154", ""])
+        res = wizard.prompt_source_selection(
+            prompter, environ={wizard.DDD_KEY_VARIABLE: _FAKE_DDD_KEY},
+        )
+        self.assertEqual(wizard.SOURCE_DTDD, res["source"])
+        self.assertEqual(10154, res["ddd_item"])
+        self.assertEqual([], res["category"])
+
+    def test_source_selection_local_model(self):
+        prompter = SequencePrompter(
+            texts=["2", "movie.mkv", "blood, gore", "blood=heavy bleeding", "custom-model", "y"]
+        )
+        res = wizard.prompt_source_selection(prompter)
+        self.assertEqual(wizard.SOURCE_MODEL, res["source"])
+        self.assertEqual(wizard.Path("movie.mkv"), res["video"])
+        self.assertEqual(["blood", "gore"], res["model_trigger"])
+        self.assertEqual(["blood=heavy bleeding"], res["model_trigger_desc"])
+        self.assertEqual("custom-model", res["model"])
+        self.assertTrue(res["model_local_only"])
+
+    def test_subtitles_selection_existing_file(self):
+        prompter = SequencePrompter(texts=["1", "dialogue.srt"])
+        res = wizard.prompt_subtitles_selection(prompter)
+        self.assertEqual(wizard.SUBTITLE_FILE, res["subtitles_type"])
+        self.assertEqual(wizard.Path("dialogue.srt"), res["subtitles"])
+
+    def test_subtitles_selection_opensubtitles(self):
+        prompter = SequencePrompter(texts=["2", "Jaws", "1975", "en", "1", "my_subs.srt"])
+        downloaded = []
+        def fake_os_search(key, query, year=None, language="en"):
+            return [{"fileId": 7061050, "language": "en", "year": 1975, "release": "Jaws.1080p"}]
+        def fake_os_download(file_id, dl_path):
+            downloaded.append((file_id, dl_path))
+
+        res = wizard.prompt_subtitles_selection(
+            prompter,
+            environ={"OPENSUBTITLES_API_KEY": _FAKE_OS_KEY},
+            os_search_fn=fake_os_search,
+            os_download_fn=fake_os_download,
+        )
+        self.assertEqual(wizard.SUBTITLE_OPENSUBTITLES, res["subtitles_type"])
+        self.assertEqual(wizard.Path("my_subs.srt"), res["subtitles"])
+        self.assertEqual(7061050, res["os_file"])
+        self.assertEqual([(7061050, wizard.Path("my_subs.srt"))], downloaded)
+
+    def test_subtitles_selection_embedded_stream(self):
+        prompter = SequencePrompter(texts=["3", "movie.mkv", "1", "eng"])
+        class FakeMedia:
+            @staticmethod
+            def probe(path):
+                return {}
+            @staticmethod
+            def subtitle_streams(info):
+                return [{"index": 1, "codec_name": "subrip", "tags": {"language": "eng"}}]
+
+        res = wizard.prompt_subtitles_selection(prompter, media_module=FakeMedia)
+        self.assertEqual(wizard.SUBTITLE_EMBEDDED, res["subtitles_type"])
+        self.assertEqual(wizard.Path("movie.mkv"), res["video"])
+        self.assertEqual(1, res["stream"])
+        self.assertEqual("eng", res["language"])
+
+    def test_run_wizard_end_to_end_dtdd(self):
+        prompter = SequencePrompter(
+            texts=[
+                "1", "dialogue.srt",  # subtitle file
+                "1", "10154", "",     # DTDD item direct
+                "output.warned.ass",  # output
+                "n",                  # dry-run
+                "y",                  # confirm proceed
+            ]
+        )
+        args = wizard.run_wizard(
+            prompter, environ={wizard.DDD_KEY_VARIABLE: _FAKE_DDD_KEY}
+        )
+        self.assertIsNotNone(args)
+        self.assertEqual(wizard.Path("dialogue.srt"), args.subtitles)
+        self.assertEqual(10154, args.ddd_item)
+        self.assertEqual(wizard.Path("output.warned.ass"), args.output)
+        self.assertFalse(args.dry_run)
+
+    def test_run_wizard_cancel(self):
+        prompter = SequencePrompter(
+            texts=[
+                "1", "dialogue.srt",
+                "1", "10154", "",
+                "output.warned.ass",
+                "n",
+                "n",  # proceed = No
+            ]
+        )
+        args = wizard.run_wizard(
+            prompter, environ={wizard.DDD_KEY_VARIABLE: _FAKE_DDD_KEY}
+        )
+        self.assertIsNone(args)
+
+    def test_cli_wizard_json_reports_mode_and_capabilities(self):
+        args = cli.build_parser().parse_args(["--wizard", "--json"])
+        result = {}
+        status = cli.run(args, lambda *unused, **unused_kwargs: None, result)
+        self.assertEqual(cli.EXIT_OK, status)
+        self.assertEqual("wizard", result["mode"])
+        self.assertEqual([wizard.SOURCE_DTDD, wizard.SOURCE_MODEL], result["sources"])
+        self.assertEqual(
+            [wizard.SUBTITLE_FILE, wizard.SUBTITLE_OPENSUBTITLES, wizard.SUBTITLE_EMBEDDED],
+            result["subtitles"],
+        )
+
+    def test_cli_wizard_requires_interactive_terminal(self):
+        args = cli.build_parser().parse_args(["--wizard"])
+        prompter = SequencePrompter(interactive=False)
+        with self.assertRaises(cli.TriggerWarningsError) as caught:
+            cli.run(args, lambda *unused, **unused_kwargs: None, {}, setup_prompter=prompter)
+        self.assertIn("interactive terminal", str(caught.exception))
+
+    def test_cli_wizard_rejects_conflicting_modes(self):
+        for argv in (
+            ["--wizard", "--setup"],
+            ["--wizard", "--list-streams", "--video", "movie.mkv"],
+            ["--wizard", "--os-search", "title"],
+            ["--wizard", "--ddd-search", "title"],
+        ):
+            args = cli.build_parser().parse_args(argv)
+            with self.assertRaises(cli.TriggerWarningsError):
+                cli.run(args, lambda *unused, **unused_kwargs: None, {})
+
+    def test_cli_wizard_end_to_end_dry_run(self):
+        prompter = SequencePrompter(
+            texts=[
+                "1", "examples/dialogue.srt",
+                "1", "10154", "",
+                "test_out.warned.ass",
+                "y",  # dry-run = yes
+                "y",  # proceed = yes
+            ],
+            secrets=["fake-key"],
+        )
+        args = cli.build_parser().parse_args(["--wizard"])
+        fake_events = wizard.ddd.DddEvents(
+            events=[wizard.ddd.Event(1000, 3000, "violence", "community", 1)],
+            notes=[], scene_alerts=0, community=1,
+        )
+        result = {}
+        messages = []
+        with mock.patch.object(cli, "_load_ddd_events", lambda *unused: fake_events):
+            status = cli.run(
+                args, lambda msg, level="info": messages.append(msg), result,
+                setup_prompter=prompter,
+            )
+        self.assertEqual(cli.EXIT_OK, status)
+        self.assertEqual("dry-run", result["mode"])
+        self.assertEqual([], result["filesWritten"])
+        self.assertGreater(result["warningWindows"], 0)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

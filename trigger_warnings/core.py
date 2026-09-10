@@ -48,6 +48,7 @@ __all__ = [
     "select_events",
     "build_windows",
     "parse_srt",
+    "warning_cues",
     "merge_cues",
     "render_srt",
     "render_ass",
@@ -545,6 +546,20 @@ def _parse_srt_block(lines, line_number, source):
 # -------------------------------------------------------------------- assembly
 
 
+def warning_cues(windows):
+    """Convert warning windows into ordered Cue objects with kind="warning".
+
+    Produces an ordered sequence of warning cues, suitable for rendering a
+    subtitle track containing just trigger warnings.
+    """
+    cues = [
+        Cue(window.start_ms, window.end_ms, WARNING_TEXT, "warning", index)
+        for index, window in enumerate(windows)
+    ]
+    cues.sort(key=lambda cue: (cue.start_ms, cue.end_ms, cue.order))
+    return cues
+
+
 def merge_cues(dialogue, windows):
     """Interleave dialogue and warning cues into one ordered, numbered sequence.
 
@@ -552,12 +567,8 @@ def merge_cues(dialogue, windows):
     at the same instant the warning is emitted first, because a player that ignores
     positioning falls back to file order.
     """
-    combined = []
-    for index, window in enumerate(windows):
-        combined.append(
-            Cue(window.start_ms, window.end_ms, WARNING_TEXT, "warning", index)
-        )
-    for index, cue in enumerate(dialogue):
+    combined = list(warning_cues(windows))
+    for index, cue in enumerate(dialogue or ()):
         combined.append(Cue(cue.start_ms, cue.end_ms, cue.text, "dialogue", index))
 
     combined.sort(

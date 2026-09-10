@@ -139,7 +139,21 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertTrue(json.loads(out.getvalue())["ok"])
         self.assertIn("Loading model", err.getvalue())
+        self.assertIn("Found [red] at 00:00:00 (0.0s - 10.0s)", err.getvalue())
         self.assertIn("100.0% Scan complete", err.getvalue())
+
+    def test_candidate_notifications_printed_during_scan(self):
+        self.enter_patch("_answer", side_effect=[True, False, False, True, False, False])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            result = vision.scan_video(self.video, ["red", "blue"], report=mock.Mock())
+        output = err.getvalue()
+        self.assertIn("Found [red] at 00:00:00 (0.0s - 10.0s)\n", output)
+        self.assertIn("Found [blue] at 00:00:10 (10.0s - 20.0s)\n", output)
+        self.assertNotIn("Found [blue] at 00:00:00", output)
+        self.assertNotIn("Found [red] at 00:00:10", output)
+        self.assertIn("100.0% Scan complete", output)
+        self.assertEqual(len(result.events), 2)
 
     def test_model_load_failure_shows_progress_and_failure(self):
         err = io.StringIO()

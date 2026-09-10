@@ -231,9 +231,31 @@ trigger-warnings --video "movie.mkv" \
 > list while replacing the timestamps with locally detected times. Use
 > `--model-trigger` to supply labels directly when no timestamped ratings exist.
 
+### Recipe: Generate warnings-only or dual subtitle tracks
+
+You can generate both the dialogue subtitle merged with trigger warnings, and a separate subtitle track with only trigger warnings, in a single run:
+
+```bash
+trigger-warnings --subtitles "movie.srt" \
+  --events events.json \
+  --output "movie.warned.ass" \
+  --warnings-output "movie.warnings-only.srt"
+```
+
+To create a subtitle track with only trigger warnings without requiring dialogue subtitles:
+
+```bash
+trigger-warnings --events events.json \
+  --warnings-output "movie.warnings-only.srt"
+```
+
+Alternatively, pass `--output FILE --warnings-only`. Both `.ass` and `.srt` formats are supported.
+
 ## Other useful options
 
 - `--output` accepts a new `.ass` or `.srt` filename.
+- `--warnings-output FILE.ass|FILE.srt` writes a subtitle file containing only trigger warnings. Combine with `--output` to generate both tracks in one run, or use alone without dialogue subtitles.
+- `--warnings-only` writes only trigger warnings into `--output`, without merging or requiring dialogue subtitles.
 - `--provenance FILE.json` saves source, timing settings and result counts.
 - `--verify FILE.png` renders one preview frame; it requires `--video` and FFmpeg.
 - `--dry-run` writes no files. With a local model, it still runs the scan.

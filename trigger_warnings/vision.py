@@ -211,6 +211,7 @@ def scan_video(
                             "label": trigger.strip(),
                             "severity": "model-candidate",
                         })
+                        progress.emit_candidate(trigger.strip(), start, end)
                     progress.finish_trigger()
                 del clip, cache_state
         if not events:

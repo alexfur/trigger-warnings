@@ -12,7 +12,11 @@ import threading
 import unittest
 from unittest import mock
 
-from trigger_warnings.progress import ProgressBar
+from trigger_warnings.progress import (
+    ProgressBar,
+    format_candidate_notification,
+    format_timestamp,
+)
 
 
 class Stream(io.StringIO):
@@ -111,6 +115,102 @@ class ProgressTests(unittest.TestCase):
         lines = stream.getvalue().split("\r")[1:]
         self.assertTrue(all(len(line.rstrip("\n")) <= 79 for line in lines))
         self.assertTrue(next(line for line in lines if "Short" in line).endswith(" "))
+
+    def test_format_timestamp_and_candidate_notification(self):
+        self.assertEqual(format_timestamp(0), "00:00:00")
+        self.assertEqual(format_timestamp(59), "00:00:59")
+        self.assertEqual(format_timestamp(60), "00:01:00")
+        self.assertEqual(format_timestamp(330), "00:05:30")
+        self.assertEqual(format_timestamp(3661), "01:01:01")
+        self.assertEqual(
+            format_candidate_notification("eyes", 330.0, 340.0),
+            "Found [eyes] at 00:05:30 (330.0s - 340.0s)",
+        )
+        self.assertEqual(
+            format_candidate_notification("blood", 0.0, 10.0),
+            "Found [blood] at 00:00:00 (0.0s - 10.0s)",
+        )
+
+    def test_emit_candidate_in_terminal_clears_bar_and_redraws(self):
+        stream = Stream(True)
+        with contextlib.redirect_stderr(stream), mock.patch(
+                "trigger_warnings.progress.shutil.get_terminal_size",
+                return_value=os.terminal_size((80, 24))):
+            with ProgressBar(1, 1) as progress:
+                progress.start_chunk(0)
+                progress.start_trigger(0, "eyes")
+                progress.emit_candidate("eyes", 330.0, 340.0)
+                progress.finish_trigger()
+        output = stream.getvalue()
+        self.assertIn("Found [eyes] at 00:05:30 (330.0s - 340.0s)\n", output)
+        self.assertIn("100.0% Scan complete", output)
+        # All carriage-returned lines must fit terminal width.
+        lines = output.split("\r")[1:]
+        self.assertTrue(all(len(line.rstrip("\n")) <= 79 for line in lines))
+
+    def test_emit_candidate_non_tty_and_disabled(self):
+        # Non-TTY output gets clean newline-terminated notification without \r.
+        stream = Stream(False)
+        with contextlib.redirect_stderr(stream):
+            with ProgressBar(1, 1) as progress:
+                progress.start_chunk(0)
+                progress.start_trigger(0, "eyes")
+                progress.emit_candidate("eyes", 330.0, 340.0)
+                progress.finish_trigger()
+        output = stream.getvalue()
+        self.assertIn("Found [eyes] at 00:05:30 (330.0s - 340.0s)\n", output)
+        self.assertNotIn("\r", output)
+
+        # Disabled progress bar emits nothing.
+        disabled_stream = Stream(False)
+        with contextlib.redirect_stderr(disabled_stream):
+            progress = ProgressBar(1, 1, enabled=False)
+            progress.emit_candidate("eyes", 330.0, 340.0)
+        self.assertEqual(disabled_stream.getvalue(), "")
+
+    def test_emit_candidate_json_progress(self):
+        out, err = io.StringIO(), Stream()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with ProgressBar(1, 1, json_progress=True) as progress:
+                progress.start_chunk(0)
+                progress.start_trigger(0, "eyes")
+                progress.emit_candidate("eyes", 330.0, 340.0)
+                progress.finish_trigger()
+        lines = err.getvalue().splitlines()
+        events = [json.loads(line) for line in lines]
+        candidate_events = [e for e in events if e.get("event") == "candidate"]
+        self.assertEqual(len(candidate_events), 1)
+        candidate = candidate_events[0]
+        self.assertEqual(candidate["type"], "progress")
+        self.assertEqual(candidate["trigger_name"], "eyes")
+        self.assertEqual(candidate["label"], "eyes")
+        self.assertEqual(candidate["start"], 330.0)
+        self.assertEqual(candidate["end"], 340.0)
+        self.assertEqual(candidate["timestamp"], "00:05:30")
+
+    def test_multiple_candidates_accumulate_above_live_bar(self):
+        stream = Stream(True)
+        with contextlib.redirect_stderr(stream), mock.patch(
+                "trigger_warnings.progress.shutil.get_terminal_size",
+                return_value=os.terminal_size((80, 24))):
+            with ProgressBar(2, 2) as progress:
+                progress.start_chunk(0)
+                progress.start_trigger(0, "eyes")
+                progress.emit_candidate("eyes", 0.0, 10.0)
+                progress.finish_trigger()
+                progress.start_trigger(1, "blood")
+                progress.emit_candidate("blood", 0.0, 10.0)
+                progress.finish_trigger()
+                progress.start_chunk(1)
+                progress.start_trigger(0, "weapon")
+                progress.emit_candidate("weapon", 10.0, 20.0)
+                progress.finish_trigger()
+        output = stream.getvalue()
+        pos_eyes = output.find("Found [eyes] at 00:00:00 (0.0s - 10.0s)\n")
+        pos_blood = output.find("Found [blood] at 00:00:00 (0.0s - 10.0s)\n")
+        pos_weapon = output.find("Found [weapon] at 00:00:10 (10.0s - 20.0s)\n")
+        pos_final = output.find("Scan complete")
+        self.assertTrue(0 <= pos_eyes < pos_blood < pos_weapon < pos_final)
 
 
 class TerminalLauncherTests(unittest.TestCase):
