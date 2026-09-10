@@ -16,6 +16,53 @@ model. No API accounts or third-party services are required.
 [Supply your own timestamps](#supply-your-own-timestamps) ·
 [Recipes](#recipes)
 
+```mermaid
+flowchart LR
+    subgraph Inputs["Video & Trigger Sources"]
+        direction TB
+        V["Video File (.mkv / .mp4)"]
+        subgraph Triggers["Trigger Definitions"]
+            M["Local VLM Scan<br/>(SmolVLM2 / Qwen)"]
+            D["DoesTheDogDie<br/>API Ratings"]
+            E["Custom JSON<br/>Timestamps"]
+        end
+        subgraph Subs["Dialogue Track"]
+            S1["Embedded Stream"]
+            S2["External .srt"]
+            S3["OpenSubtitles"]
+        end
+    end
+
+    subgraph Core["trigger-warnings Pipeline"]
+        direction TB
+        P["Prompt & Prefix Cache<br/>(PromptCacheState)"]
+        W["Window Builder<br/>(Lead & Tail Clamping)"]
+        R["Deterministic Merger<br/>(No Spoiler Text)"]
+    end
+
+    subgraph Outputs["Generated Tracks"]
+        direction TB
+        O1["Merged Subtitles<br/>(.ass / .srt)<br/>'TRIGGER INCOMING' + Dialogue"]
+        O2["Warnings-Only Track<br/>(--warnings-output)"]
+        O3["Provenance Log<br/>(--provenance .json)"]
+        O4["Verification Frame<br/>(--verify .png)"]
+    end
+
+    V --> P
+    M --> P
+    P --> W
+    D --> W
+    E --> W
+    W --> R
+    S1 --> R
+    S2 --> R
+    S3 --> R
+    R --> O1
+    R --> O2
+    R --> O3
+    R --> O4
+```
+
 
 ## Scan a video with local AI
 
