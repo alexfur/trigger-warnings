@@ -58,6 +58,16 @@ class AnswerTests(unittest.TestCase):
                     self.assertEqual(template.call_args.kwargs["video"], clip.source)
                     self.assertEqual(template.call_args.kwargs["num_images"], 0)
 
+    def test_descriptor_replaces_trigger_label_in_prompt(self):
+        clip = VideoClip(0, 1, [object()], [0], "/video.mkv")
+        model = types.SimpleNamespace(config=types.SimpleNamespace(model_type="smolvlm"))
+        generate = mock.Mock(return_value=types.SimpleNamespace(text="yes"))
+        template = mock.Mock(return_value="prompt")
+        vision._answer(generate, template, model, mock.Mock(), mock.Mock(),
+                       clip, "eyes", 16, 1, descriptor="close-up eyeball trauma")
+        self.assertIn("Does this clip show the following: close-up eyeball trauma?",
+                      template.call_args.args[2])
+
 
 class ScanTests(unittest.TestCase):
     def setUp(self):
@@ -181,6 +191,16 @@ class ScanTests(unittest.TestCase):
         vision.scan_video(self.video, ["red"])
         # Single trigger: no cache overhead needed.
 
+    def test_trigger_descriptors_passed_to_answer(self):
+        answers = self.enter_patch("_answer", return_value=True)
+        result = vision.scan_video(
+            self.video, ["eyes", "teeth"],
+            trigger_descriptors={"eyes": "close-up eyeball trauma"}
+        )
+        self.assertEqual(answers.call_args_list[0].kwargs["descriptor"], "close-up eyeball trauma")
+        self.assertIsNone(answers.call_args_list[1].kwargs["descriptor"])
+        self.assertEqual(result.metadata["triggerDescriptors"], {"eyes": "close-up eyeball trauma"})
+
 
 class ModelCliTests(unittest.TestCase):
     def setUp(self):
@@ -276,3 +296,21 @@ class ModelCliTests(unittest.TestCase):
                 result = json.loads(out.getvalue())
                 self.assertEqual(status, 2)
                 self.assertIn("--model-local-only", result["error"]["message"])
+
+    def test_model_trigger_desc_threaded_to_scan(self):
+        with mock.patch.object(vision, "scan_video", return_value=self.scan) as scan:
+            status, result = self.invoke("--model-trigger", "eyes",
+                                         "--model-trigger-desc", "eyes=eyeball trauma")
+        self.assertEqual(status, 0)
+        self.assertEqual(scan.call_args.kwargs["trigger_descriptors"],
+                         {"eyes": "eyeball trauma"})
+
+    def test_model_trigger_desc_validation_errors(self):
+        for desc, err in [("no_equals", "must be LABEL=DESCRIPTION"),
+                          ("eyes=", "empty description"),
+                          ("unknown=something", "no --model-trigger matches it")]:
+            with self.subTest(desc=desc):
+                status, result = self.invoke("--model-trigger", "eyes",
+                                             "--model-trigger-desc", desc)
+                self.assertEqual(status, 2)
+                self.assertIn(err, result["error"]["message"])

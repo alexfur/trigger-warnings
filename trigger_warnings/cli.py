@@ -294,6 +294,13 @@ def build_parser():
              "several; requires --video and replaces --events/--ddd-item",
     )
     parser.add_argument(
+        "--model-trigger-desc", action="append", default=[], metavar="LABEL=DESCRIPTION",
+        help="describe a --model-trigger for the vision model, e.g. "
+             "--model-trigger-desc 'eyes=close-up eyeball trauma, eye gouging, "
+             "or objects penetrating eyes — NOT simply a face'; repeat for each "
+             "trigger that needs a descriptor",
+    )
+    parser.add_argument(
         "--model-from-ddd", action="store_true",
         help="use the selected DoesTheDogDie item's trigger labels as the model checklist",
     )
@@ -744,13 +751,50 @@ def _load_ddd_events(args, report):
     return source
 
 
+def _parse_trigger_descriptors(raw, triggers):
+    """Parse ``LABEL=DESCRIPTION`` pairs and validate against known triggers.
+
+    Returns a dict mapping case-folded trigger labels to their descriptors.
+    Raises :class:`TriggerWarningsError` if a descriptor references a trigger
+    that was not requested, or if the ``=`` separator is missing.
+    """
+    descs = {}
+    known = {t.strip().casefold() for t in triggers}
+    for entry in raw:
+        eq = entry.find("=")
+        if eq < 1:
+            raise TriggerWarningsError(
+                "--model-trigger-desc must be LABEL=DESCRIPTION, got {!r}".format(entry)
+            )
+        label = entry[:eq].strip()
+        description = entry[eq + 1:].strip()
+        if not description:
+            raise TriggerWarningsError(
+                "--model-trigger-desc for {!r} has an empty description".format(label)
+            )
+        key = label.casefold()
+        if key not in known:
+            raise TriggerWarningsError(
+                "--model-trigger-desc names {!r} but no --model-trigger matches it; "
+                "known triggers: {}".format(label, ", ".join(sorted(known)))
+            )
+        if key in descs:
+            raise TriggerWarningsError(
+                "--model-trigger-desc for {!r} was given more than once".format(label)
+            )
+        descs[key] = description
+    return descs
+
+
 def _load_model_events(args, report, triggers=None):
     """Run the explicitly requested local model and return provider-neutral events."""
     from . import vision
 
+    effective_triggers = args.model_trigger if triggers is None else triggers
+    descs = _parse_trigger_descriptors(args.model_trigger_desc, effective_triggers)
     scan = vision.scan_video(
         args.video,
-        args.model_trigger if triggers is None else triggers,
+        effective_triggers,
         model=args.model or vision.DEFAULT_MODEL,
         revision=args.model_revision,
         local_only=args.model_local_only,
@@ -758,6 +802,7 @@ def _load_model_events(args, report, triggers=None):
         chunk_seconds=args.model_chunk,
         width=args.model_width,
         max_tokens=args.model_max_tokens,
+        trigger_descriptors=descs or None,
         report=report,
         json_progress=args.progress_json,
     )
@@ -1051,6 +1096,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--ddd-year", args.ddd_year, None),
         ("--ddd-api-key", args.ddd_api_key, None),
         ("--model-trigger", args.model_trigger, []),
+        ("--model-trigger-desc", args.model_trigger_desc, []),
         ("--model-from-ddd", args.model_from_ddd, False),
         ("--model", args.model, None),
         ("--model-revision", args.model_revision, None),
@@ -1404,6 +1450,7 @@ def run(args, report, result=None, setup_prompter=None):
                     "{}".format(flag)
                 )
         for flag, value in (("--model-trigger", args.model_trigger),
+                            ("--model-trigger-desc", args.model_trigger_desc),
                             ("--model-from-ddd", args.model_from_ddd),
                             ("--model", args.model), ("--model-revision", args.model_revision),
                             ("--model-local-only", args.model_local_only),
@@ -1411,7 +1458,8 @@ def run(args, report, result=None, setup_prompter=None):
                             ("--model-width", args.model_width), ("--model-max-tokens", args.model_max_tokens)):
             default = {"--model-fps": 1.0, "--model-chunk": 10.0,
                        "--model-width": 384, "--model-max-tokens": 16,
-                       "--model-trigger": [], "--model-from-ddd": False,
+                       "--model-trigger": [], "--model-trigger-desc": [],
+                       "--model-from-ddd": False,
                        "--model-local-only": False}.get(flag)
             if value is not None and _was_supplied(args, flag, value, default):
                 raise TriggerWarningsError(
@@ -1518,6 +1566,7 @@ def run(args, report, result=None, setup_prompter=None):
             ("--model-chunk", args.model_chunk, 10.0),
             ("--model-width", args.model_width, 384),
             ("--model-max-tokens", args.model_max_tokens, 16),
+            ("--model-trigger-desc", args.model_trigger_desc, []),
             ("--progress-json", args.progress_json, False),
         ):
             if value is not None and _was_supplied(args, flag, value, default):

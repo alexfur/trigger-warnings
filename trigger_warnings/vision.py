@@ -77,12 +77,13 @@ def _load_backend(model_path):
 
 
 def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, max_tokens, fps,
-            prompt_cache_state=None):
+            prompt_cache_state=None, descriptor=None):
+    question = descriptor if descriptor else trigger
     prompt = (
         "This video clip covers {:.3f} to {:.3f} seconds. "
         "Its sampled frames are in chronological order at these video times: {}. "
-        "Does this clip show the following trigger: {!r}? Answer only yes or no.".format(
-            clip.start, clip.end, ", ".join("{:.3f}s".format(t) for t in clip.timestamps), trigger)
+        "Does this clip show the following: {}? Answer only yes or no.".format(
+            clip.start, clip.end, ", ".join("{:.3f}s".format(t) for t in clip.timestamps), question)
     )
     try:
         # SmolVLM's video processor expands one visual token per frame. Native
@@ -132,6 +133,7 @@ def scan_video(
     chunk_seconds=DEFAULT_CHUNK_SECONDS,
     width=DEFAULT_WIDTH,
     max_tokens=DEFAULT_MAX_TOKENS,
+    trigger_descriptors=None,
     report=None,
     json_progress=False,
 ):
@@ -140,6 +142,10 @@ def scan_video(
     The video is decoded directly into memory and never modified.
     Events cover the complete positive chunk because this first scanner does
     not claim sub-chunk temporal precision. ``report`` receives progress text.
+
+    When ``trigger_descriptors`` is a dict mapping trigger labels (case-folded)
+    to descriptive strings, the descriptor replaces the bare label in the model
+    question. The event ``label`` stays as the original trigger name.
     """
     video = Path(video).resolve()
     if not video.is_file():
@@ -171,6 +177,7 @@ def scan_video(
                 model_path = resolve_model(model, revision=revision, local_only=local_only)
             progress.set_stage("Loading model")
             mx, generate, apply_chat_template, loaded_model, processor, PromptCacheState = _load_backend(model_path)
+            descs = {k.casefold(): v for k, v in (trigger_descriptors or {}).items()}
             events = []
             for number in range(chunks):
                 progress.start_chunk(number)
@@ -183,9 +190,11 @@ def scan_video(
                 cache_state = PromptCacheState() if len(triggers) > 1 else None
                 for trigger_idx, trigger in enumerate(triggers):
                     progress.start_trigger(trigger_idx, trigger)
+                    desc = descs.get(trigger.strip().casefold())
                     if _answer(generate, apply_chat_template, loaded_model, processor, mx,
                                clip, trigger.strip(), max_tokens, fps,
-                               prompt_cache_state=cache_state):
+                               prompt_cache_state=cache_state,
+                               descriptor=desc):
                         events.append({
                             "start": round(start, 3),
                             "end": round(end, 3),
@@ -219,6 +228,7 @@ def scan_video(
         "durationSeconds": duration,
         "chunks": chunks,
         "requestedTriggers": [trigger.strip() for trigger in triggers],
+        "triggerDescriptors": descs if descs else None,
         "candidateEvents": len(events),
         "notes": notes,
     }

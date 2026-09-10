@@ -9,23 +9,13 @@ Add advance warnings to the subtitles of a local video. The output combines
 dialogue with a generic `TRIGGER INCOMING` warning, without naming the trigger
 on screen. Load the new subtitle file in your video player.
 
-## Choose your trigger source
+The default workflow scans your video locally on Apple Silicon using a vision-language
+model. No API accounts or third-party services are required.
 
-**Local AI scanning and DoesTheDogDie are two alternative ways to get trigger
-timestamps.** Neither requires the other.
+[Scan a video with local AI](#scan-a-video-with-local-ai) ·
+[Supply your own timestamps](#supply-your-own-timestamps) ·
+[Recipes](#recipes)
 
-| Source | How it gets the times | What you need |
-| --- | --- | --- |
-| **Local AI model** | Scans your video for triggers you describe with `--model-trigger`. | A Mac with an Apple M-series chip; no API account |
-| **DoesTheDogDie (DDD)** | Imports community timestamps for `--ddd-item`. | Your own DDD API key; no local AI model |
-| **Your own timestamps** | Reads times and labels from `--events events.json`. | An event JSON file; no API account |
-
-All three also need dialogue subtitles: an existing SRT file or a suitable
-subtitle track inside the video.
-
-[Scan a video](#scan-a-video-with-local-ai) ·
-[Use DDD timestamps](#use-doesthedogdie-timestamps) ·
-[Supply your own times](#supply-your-own-timestamps)
 
 ## Scan a video with local AI
 
@@ -38,22 +28,19 @@ warning system.
 You need:
 
 - A Mac with an Apple M-series chip, such as M1 or M2.
-- Python 3.10 or newer and Git installed.
+- Python 3.10 or newer.
 - [Homebrew](https://brew.sh/) for the FFmpeg install command below.
 
 Run these commands in Terminal:
 
 ```bash
 brew install ffmpeg
-git clone https://github.com/alexfur/trigger-warnings.git
-cd trigger-warnings
-python3 -m venv .venv
-.venv/bin/python -m pip install '.[vision]'
+python3 -m pip install 'trigger-warnings[vision]'
 ```
 
-FFmpeg reads the video. The last command installs Trigger Warnings and the
-additional software it needs to run AI models. Keep using this Terminal in
-the `trigger-warnings` folder for the examples below.
+FFmpeg reads the video container. The `vision` extra installs local AI model
+support on Apple Silicon.
+
 
 ### 2. Choose the video and triggers
 
@@ -61,7 +48,7 @@ Replace `movie.mkv` with your video's path and describe each trigger in a
 separate `--model-trigger` option. Quote paths containing spaces.
 
 ```bash
-.venv/bin/trigger-warnings \
+trigger-warnings \
   --video "movie.mkv" \
   --model-trigger 'blood' \
   --model-trigger 'a person holding a gun' \
@@ -75,7 +62,7 @@ time remaining. Captured output gets a bar snapshot every five seconds.
 For a live bar when an agent runs a scan in Maestri, open a visible terminal:
 
 ```bash
-.venv/bin/python scripts/scan-in-terminal.py --json \
+python3 scripts/scan-in-terminal.py --json \
   --video "movie.mkv" --model-trigger 'blood' --output "movie.warnings.ass"
 ```
 
@@ -87,7 +74,7 @@ the terminal opened. Read the scan's final result in the new terminal.
 program needs JSON progress on stderr; this replaces the visual bar:
 
 ```bash
-.venv/bin/trigger-warnings --json --progress-json \
+trigger-warnings --json --progress-json \
   --video "movie.mkv" \
   --model-trigger 'blood' \
   --output "movie.warnings.ass"
@@ -99,7 +86,7 @@ have a separate SRT file, add `--subtitles "movie.srt"` to the command.
 To check which embedded tracks are available before scanning:
 
 ```bash
-.venv/bin/trigger-warnings --video "movie.mkv" --list-streams
+trigger-warnings --video "movie.mkv" --list-streams
 ```
 
 Use `--stream INDEX` to select an index from that list, or `--language CODE`
@@ -134,7 +121,7 @@ start 20 seconds before each detected event; `--lead` changes that interval.
 Use `--model` to override SmolVLM2, for example with Qwen2.5-VL:
 
 ```bash
-.venv/bin/trigger-warnings \
+trigger-warnings \
   --video "movie.mkv" \
   --model "mlx-community/Qwen2.5-VL-7B-Instruct-4bit" \
   --model-trigger 'blood' \
@@ -146,6 +133,7 @@ measures SmolVLM2 on synthetic footage, not Qwen or real trigger-detection accur
 
 | Option | Default | Purpose |
 | --- | --- | --- |
+| `--model-trigger-desc` | Unspecified | Prompt description for a trigger (`LABEL=DESC`) to reduce false positives |
 | `--model-fps` | `1` | Frames sampled per second |
 | `--model-chunk` | `10` | Video seconds checked per chunk |
 | `--model-width` | `384` | Extracted frame width in pixels |
@@ -153,76 +141,10 @@ measures SmolVLM2 on synthetic footage, not Qwen or real trigger-detection accur
 | `--model-revision` | Unspecified | Pin a model revision |
 | `--progress-json` | Off | Emit structured progress on stderr |
 
-## Use DoesTheDogDie timestamps
-
-This route imports timestamps without running an AI model. The base package
-needs Python 3.9 or newer. From the cloned repository, install it with:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install .
-```
-
-These examples use an existing `movie.srt`, so they do not need FFmpeg.
-For Windows, use `.venv\Scripts\python.exe` and
-`.venv\Scripts\trigger-warnings.exe` in place of the `.venv/bin/` commands.
-
-1. Get your own [DDD API key](https://www.doesthedogdie.com/api).
-2. Run the setup command in your terminal and follow the hidden prompts.
-   Skip OpenSubtitles setup if you already have dialogue subtitles.
-
-   ```bash
-   .venv/bin/trigger-warnings --setup --save
-   ```
-
-3. Search for the title and choose the matching item ID:
-
-   ```bash
-   .venv/bin/trigger-warnings --ddd-search 'Jaws' --ddd-year 1975
-   ```
-
-4. Replace `ITEM_ID` below with that numeric ID. Preview its available
-   categories, then generate warnings for the exact labels you choose:
-
-   ```bash
-   .venv/bin/trigger-warnings --subtitles "movie.srt" \
-     --ddd-item ITEM_ID --dry-run
-
-   .venv/bin/trigger-warnings --subtitles "movie.srt" \
-     --ddd-item ITEM_ID --category 'a dog dies' \
-     --output "movie.warnings.ass"
-   ```
-
-Repeat `--category` for more labels. Omitting it selects every available
-category. DDD timestamps can be incomplete or belong to a different edition.
-Retain the `Powered by DoesTheDogDie.com` attribution.
-
-> [!WARNING]
-> Keep API keys out of chat, source control and logs. The setup command can
-> save credentials in your operating system's keychain. `DDD_API_KEY` is the
-> environment-variable alternative and overrides a stored key. Avoid
-> `--ddd-api-key`: its value can appear in shell history and the process list.
-
-### Optional: use DDD labels for a local scan
-
-With local AI support installed, add `--model-from-ddd` to use an item's
-labels as the checklist while the model finds times in your video:
-
-```bash
-.venv/bin/trigger-warnings --video "movie.mkv" \
-  --ddd-item ITEM_ID --model-from-ddd --category 'a dog dies' \
-  --output "movie.model-warnings.ass"
-```
-
-> [!NOTE]
-> This mode currently takes labels from DDD's timestamped ratings, so it still
-> requires those ratings even though it replaces their times. It does not
-> fetch your personal saved trigger preferences. Use `--model-trigger` to
-> supply labels directly when no timestamped ratings exist.
-
 ## Supply your own timestamps
 
-Use the base installation above. Save this as `events.json`:
+If you already have timestamps, you can provide them directly without running an
+AI model. Save this as `events.json`:
 
 ```json
 [
@@ -236,16 +158,78 @@ optional. Without an end time, the warning stops at the event start, which
 is not a safe point to resume watching.
 
 ```bash
-.venv/bin/trigger-warnings --subtitles "movie.srt" \
+trigger-warnings --subtitles "movie.srt" \
   --events events.json --output "movie.warnings.ass"
 ```
 
 To try this route without preparing files, use the synthetic examples:
 
 ```bash
-.venv/bin/trigger-warnings --subtitles examples/dialogue.srt \
+trigger-warnings --subtitles examples/dialogue.srt \
   --events examples/events.json --output example.warnings.ass
 ```
+
+## Recipes
+
+### Recipe: Import timestamps from DoesTheDogDie
+
+If you prefer to import community-contributed timestamps instead of running a
+local model or curating timestamps by hand, you can import them from DoesTheDogDie
+(DDD). This requires an API key from [DoesTheDogDie](https://www.doesthedogdie.com/api).
+
+To install the lightweight base package without AI model dependencies:
+
+```bash
+brew install ffmpeg
+python3 -m pip install trigger-warnings
+```
+
+1. Get your own [DDD API key](https://www.doesthedogdie.com/api).
+2. Run the setup command in your terminal and follow the hidden prompts:
+
+   ```bash
+   trigger-warnings --setup --save
+   ```
+
+3. Search for the title and choose the matching item ID:
+
+   ```bash
+   trigger-warnings --ddd-search 'Jaws' --ddd-year 1975
+   ```
+
+4. Generate warnings for the categories you choose:
+
+   ```bash
+   trigger-warnings --subtitles "movie.srt" \
+     --ddd-item ITEM_ID --category 'a dog dies' \
+     --output "movie.warnings.ass"
+   ```
+
+Repeat `--category` to select more labels. Omitting it selects every available
+category for that item. Retain the `Powered by DoesTheDogDie.com` attribution in
+downstream files.
+
+> [!WARNING]
+> Keep API keys out of chat, source control and logs. The setup command can
+> save credentials in your operating system's keychain. `DDD_API_KEY` is the
+> environment-variable alternative and overrides a stored key. Avoid
+> `--ddd-api-key`: its value can appear in shell history and the process list.
+
+### Recipe: Use DDD labels for a local AI scan
+
+With local AI support installed, add `--model-from-ddd` to use an item's
+community labels as the checklist while the model finds times in your video:
+
+```bash
+trigger-warnings --video "movie.mkv" \
+  --ddd-item ITEM_ID --model-from-ddd --category 'a dog dies' \
+  --output "movie.model-warnings.ass"
+```
+
+> [!NOTE]
+> This mode takes labels from DDD's timestamped ratings, using them as the prompt
+> list while replacing the timestamps with locally detected times. Use
+> `--model-trigger` to supply labels directly when no timestamped ratings exist.
 
 ## Other useful options
 
@@ -263,7 +247,7 @@ To try this route without preparing files, use the synthetic examples:
 - OpenSubtitles supplies dialogue only through `--os-search` and `--os-file`.
   It needs your own account and API key.
 
-Run `.venv/bin/trigger-warnings --help` for all flags. Coding agents should
+Run `trigger-warnings --help` for all flags. Coding agents should
 follow the [agent skill](skills/trigger-warnings/SKILL.md): check `ok`, read
 `notes` and `messages`, and use `filesWritten` to confirm output was created.
 
