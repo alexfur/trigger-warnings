@@ -56,12 +56,23 @@ def scan_episode(video_path):
     return exit_code
 
 def main():
-    print("Dark Season 1 (Episodes 8, 9, 10) Gemini Cloud Trigger Scan", flush=True)
+    print("Dark Season 1 Gemini Cloud Trigger Scan", flush=True)
     print("Triggers: eyes, nails, teeth, head smashing", flush=True)
     print(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
     
+    episodes_to_scan = EPISODES
+    if len(sys.argv) > 1:
+        requested = sys.argv[1:]
+        filtered = []
+        for r in requested:
+            for ep in EPISODES:
+                if r in ep.name or f"E0{r}" in ep.name or f"E{r}" in ep.name:
+                    filtered.append(ep)
+        if filtered:
+            episodes_to_scan = filtered
+
     results = {}
-    for ep in EPISODES:
+    for ep in episodes_to_scan:
         if not ep.exists():
             print(f"Error: {ep} does not exist!", file=sys.stderr)
             continue

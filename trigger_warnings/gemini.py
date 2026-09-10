@@ -218,53 +218,60 @@ def scan_video_gemini(
             if report:
                 report(f"Uploading {size_mb:.1f} MB to Google AI Studio File API...")
 
-            anon_name = f"scan_{os.urandom(4).hex()}"
-            upload_config = types.UploadFileConfig(display_name=anon_name) if types else None
-
-            t_upload_start = time.time()
             import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                if upload_config:
-                    future = executor.submit(client.files.upload, file=str(upload_path), config=upload_config)
-                else:
-                    future = executor.submit(client.files.upload, file=str(upload_path))
+            uploaded_file = None
+            for upload_attempt in range(2):
+                anon_name = f"scan_{os.urandom(4).hex()}"
+                upload_config = types.UploadFileConfig(display_name=anon_name) if types else None
 
-                while not future.done():
-                    time.sleep(0.5)
-                    elapsed = time.time() - t_upload_start
-                    # Smooth visual progress indicator while upload completes
-                    est_frac = min(0.95, elapsed / max(5.0, size_mb / 4.0))
+                t_upload_start = time.time()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    if upload_config:
+                        future = executor.submit(client.files.upload, file=str(upload_path), config=upload_config)
+                    else:
+                        future = executor.submit(client.files.upload, file=str(upload_path))
+
+                    while not future.done():
+                        time.sleep(0.5)
+                        elapsed = time.time() - t_upload_start
+                        est_frac = min(0.95, elapsed / max(5.0, size_mb / 4.0))
+                        progress.set_custom_progress(
+                            f"Uploading video ({size_mb:.1f} MB)",
+                            fraction=est_frac,
+                            detail=f"{elapsed:.0f}s elapsed",
+                        )
+                    uploaded_file = future.result()
+
+                progress.set_custom_progress("Uploaded video", fraction=1.0, detail="complete")
+
+                progress.set_custom_progress("Processing on Google Cloud", fraction=0.25, detail="ingesting...")
+                if report:
+                    report(f"Uploaded as {uploaded_file.name}. Processing on Google Cloud...")
+
+                poll_start = time.time()
+                while getattr(uploaded_file.state, "name", str(uploaded_file.state)) == "PROCESSING":
+                    time.sleep(2)
+                    elapsed_poll = time.time() - poll_start
+                    frac = min(0.65, 0.25 + (elapsed_poll / 120.0))
                     progress.set_custom_progress(
-                        f"Uploading video ({size_mb:.1f} MB)",
-                        fraction=est_frac,
-                        detail=f"{elapsed:.0f}s elapsed",
+                        "Processing on Google Cloud",
+                        fraction=frac,
+                        detail=f"{elapsed_poll:.0f}s elapsed",
                     )
-                uploaded_file = future.result()
+                    uploaded_file = client.files.get(name=uploaded_file.name)
+                    if time.time() - poll_start > 300:
+                        raise GeminiError("Timed out waiting for Google File API to process video (300s).")
 
-            progress.set_custom_progress("Uploaded video", fraction=1.0, detail="complete")
-
-            progress.set_custom_progress("Processing on Google Cloud", fraction=0.25, detail="ingesting...")
-            if report:
-                report(f"Uploaded as {uploaded_file.name}. Processing on Google Cloud...")
-
-            poll_start = time.time()
-            while getattr(uploaded_file.state, "name", str(uploaded_file.state)) == "PROCESSING":
-                time.sleep(2)
-                elapsed_poll = time.time() - poll_start
-                frac = min(0.65, 0.25 + (elapsed_poll / 120.0))
-                progress.set_custom_progress(
-                    "Processing on Google Cloud",
-                    fraction=frac,
-                    detail=f"{elapsed_poll:.0f}s elapsed",
-                )
-                uploaded_file = client.files.get(name=uploaded_file.name)
-                if time.time() - poll_start > 300:
-                    raise GeminiError("Timed out waiting for Google File API to process video (300s).")
-
-            state_str = getattr(uploaded_file.state, "name", str(uploaded_file.state))
-            if state_str == "FAILED":
-                err_msg = getattr(uploaded_file, "error", "unknown error")
-                raise GeminiError(f"Google File API processing failed: {err_msg}")
+                state_str = getattr(uploaded_file.state, "name", str(uploaded_file.state))
+                if state_str == "FAILED":
+                    err_msg = getattr(uploaded_file, "error", "unknown error")
+                    if upload_attempt == 0:
+                        if report:
+                            report(f"Google File API ingestion failed ({err_msg}). Retrying upload in 3s...")
+                        time.sleep(3)
+                        continue
+                    raise GeminiError(f"Google File API processing failed: {err_msg}")
+                break
 
             progress.set_custom_progress(f"Gemini analyzing video", fraction=0.7, detail="querying model...")
 
