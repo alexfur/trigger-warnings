@@ -78,11 +78,11 @@ def _load_backend(model_path):
 
 def _answer(generate, apply_chat_template, model, processor, mx, clip, trigger, max_tokens, fps,
             prompt_cache_state=None, descriptor=None):
-    question = descriptor if descriptor else trigger
+    question = descriptor if descriptor else f"the trigger: {trigger!r}"
     prompt = (
         "This video clip covers {:.3f} to {:.3f} seconds. "
         "Its sampled frames are in chronological order at these video times: {}. "
-        "Does this clip show the following: {}? Answer only yes or no.".format(
+        "Does this clip show {}? Answer only yes or no.".format(
             clip.start, clip.end, ", ".join("{:.3f}s".format(t) for t in clip.timestamps), question)
     )
     try:

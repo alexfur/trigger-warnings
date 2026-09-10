@@ -65,7 +65,7 @@ class AnswerTests(unittest.TestCase):
         template = mock.Mock(return_value="prompt")
         vision._answer(generate, template, model, mock.Mock(), mock.Mock(),
                        clip, "eyes", 16, 1, descriptor="close-up eyeball trauma")
-        self.assertIn("Does this clip show the following: close-up eyeball trauma?",
+        self.assertIn("Does this clip show close-up eyeball trauma?",
                       template.call_args.args[2])
 
 
