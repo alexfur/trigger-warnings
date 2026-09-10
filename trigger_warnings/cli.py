@@ -322,6 +322,10 @@ def build_parser():
         help="maximum answer tokens for --model-trigger (default: 16)",
     )
     parser.add_argument(
+        "--progress-json", action="store_true",
+        help="replace the live scan bar with JSON progress lines on stderr",
+    )
+    parser.add_argument(
         "--os-search", metavar="TITLE",
         help="search OpenSubtitles for a dialogue track; choose a file id "
              "before downloading",
@@ -750,6 +754,7 @@ def _load_model_events(args, report, triggers=None):
         width=args.model_width,
         max_tokens=args.model_max_tokens,
         report=report,
+        json_progress=args.progress_json,
     )
     report(
         "Local model found {} candidate event{} in {} chunk{}.".format(
@@ -1048,6 +1053,7 @@ def _reject_os_flags(args, mode, allowed):
         ("--model-chunk", args.model_chunk, 10.0),
         ("--model-width", args.model_width, 384),
         ("--model-max-tokens", args.model_max_tokens, 16),
+        ("--progress-json", args.progress_json, False),
         ("--os-search", args.os_search, None),
         ("--os-file", args.os_file, None),
         ("--os-api-key", args.os_api_key, None),
@@ -1503,6 +1509,7 @@ def run(args, report, result=None, setup_prompter=None):
             ("--model-chunk", args.model_chunk, 10.0),
             ("--model-width", args.model_width, 384),
             ("--model-max-tokens", args.model_max_tokens, 16),
+            ("--progress-json", args.progress_json, False),
         ):
             if value is not None and _was_supplied(args, flag, value, default):
                 raise TriggerWarningsError("{} needs --model-trigger".format(flag))

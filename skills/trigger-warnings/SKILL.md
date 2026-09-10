@@ -19,8 +19,8 @@ trigger_warnings` instead.
 
 Pass `--json` on every run but `--help` and `--version`, which print their own
 plain text and exit 0 whatever else is on the command line. Otherwise `--json`
-writes one JSON object to stdout, leaves stderr empty, and exits 0 or 2. Parse
-that object; never scrape the prose report.
+writes one JSON object to stdout and exits 0 or 2. Model scans also show progress
+on stderr. Keep the streams separate and parse stdout; never scrape the prose report.
 
 - `ok` is `true` or `false`. On failure, read `error.message`, and treat
   `error.code` as an open set of failure classes rather than a fixed list.
@@ -99,6 +99,34 @@ records or fetch protected timelines. Ask for a missing input that blocks
 generation rather than substituting a clean result.
 
 ### The local model source
+
+Run long model scans in a visible plain terminal so the user can watch progress.
+An agent's captured tool-output panel can truncate or delay updates even when
+the process keeps writing. A hidden pseudo-terminal alone does not solve that.
+
+In Maestri, run `maestri list` first, then use the repository launcher with the
+same Python environment as the CLI:
+
+```sh
+.venv/bin/python scripts/scan-in-terminal.py --json \
+  --video '/absolute/path/movie.mkv' --model-trigger 'blood' \
+  --output '/absolute/path/movie.warnings.ass'
+```
+
+The launcher opens a connected terminal running the CLI directly. It needs
+Maestri's terminal-creation capability; a successful launch is not a successful
+scan. Read the returned terminal name and use `maestri check` to inspect its
+final result. Do not start a second scan in the agent's tool panel. If terminal
+creation is unavailable, use an available visible terminal tool or give the
+user the command to run in their own terminal.
+
+Keep `--json` for the final result, but omit `--progress-json` when the user
+needs the visual bar. That flag explicitly selects machine progress instead.
+Do not pipe or redirect stderr, or combine it with stdout using `2>&1`.
+The bar shows a heartbeat during loading, frame extraction and inference;
+captured output gets a newline snapshot every five seconds. Percentage measures
+completed trigger checks. Progress messages are not detections. Cancellation
+discards partial candidates; never interpret it as a scan with no matches.
 
 This source is opt-in and local. It needs Apple Silicon, FFmpeg and the optional
 extra (`pip install 'trigger-warnings[vision]'`). Pass `--video` and one or

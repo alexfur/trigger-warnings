@@ -21,6 +21,8 @@ import subprocess
 import tempfile
 from collections import namedtuple
 
+from .progress import ProgressBar
+
 
 class VisionError(ValueError):
     """The optional local vision scanner could not produce safe events."""
@@ -34,7 +36,6 @@ DEFAULT_FPS = 1.0
 DEFAULT_WIDTH = 384
 DEFAULT_MAX_TOKENS = 16
 _YES_NO = re.compile(r"^\s*(yes|no)[\s.!]*$", re.IGNORECASE)
-
 
 def _binary(name):
     path = shutil.which(name)
@@ -96,9 +97,8 @@ def _load_backend(model_name, revision=None):
         ) from error
     try:
         kwargs = {} if revision is None else {"revision": revision}
-        # Hugging Face's downloader emits tqdm progress on stderr. The CLI's
-        # JSON contract reserves stderr for nothing, so keep that incidental
-        # progress out of machine-readable runs.
+        # Keep the downloader's own bars out of our progress stream. The scan
+        # heartbeat holds the original stderr while this redirect is active.
         with contextlib.redirect_stderr(io.StringIO()):
             model, processor = load(model_name, **kwargs)
     except Exception as error:
@@ -159,6 +159,7 @@ def scan_video(
     width=DEFAULT_WIDTH,
     max_tokens=DEFAULT_MAX_TOKENS,
     report=None,
+    json_progress=False,
 ):
     """Scan ``video`` for each requested trigger and return candidate events.
 
@@ -183,56 +184,62 @@ def scan_video(
     if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
         raise VisionError("--model-max-tokens must be a positive whole number")
 
-    duration = _duration(video)
-    mx, generate, apply_chat_template, loaded_model, processor = _load_backend(model, revision)
-    events = []
-    chunks = math.ceil(duration / chunk_seconds)
-    with tempfile.TemporaryDirectory(prefix="trigger-warnings-vision-") as folder:
-        folder = Path(folder)
-        for number in range(chunks):
-            start = number * chunk_seconds
-            end = min(duration, start + chunk_seconds)
-            frame_dir = folder / "{:06d}".format(number)
-            frame_dir.mkdir()
-            _run([
-                _binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
-                "-ss", "{:.6f}".format(start), "-i", str(video),
-                "-t", "{:.6f}".format(end - start),
-                "-vf", "fps={:.6f},scale={}:{}".format(fps, width, -2),
-                "-q:v", "3", str(frame_dir / "%05d.jpg"),
-            ])
-            paths = sorted(frame_dir.glob("*.jpg"))
-            if not paths:
-                raise VisionError("FFmpeg produced no frames for {:.3f}s".format(start))
-            try:
-                from PIL import Image
-            except ImportError as error:
-                raise VisionError(
-                    "--model-trigger needs Pillow; install the optional vision dependencies"
-                ) from error
-            images = []
-            for path in paths:
+    with ProgressBar(total_triggers=len(triggers),
+                     enabled=report is not None or json_progress,
+                     json_progress=json_progress) as progress:
+        duration = _duration(video)
+        progress.total_chunks = math.ceil(duration / chunk_seconds)
+        progress.set_stage("Loading model (first run may download weights)")
+        mx, generate, apply_chat_template, loaded_model, processor = _load_backend(model, revision)
+        events = []
+        chunks = math.ceil(duration / chunk_seconds)
+        with tempfile.TemporaryDirectory(prefix="trigger-warnings-vision-") as folder:
+            folder = Path(folder)
+            for number in range(chunks):
+                progress.start_chunk(number)
+                start = number * chunk_seconds
+                end = min(duration, start + chunk_seconds)
+                frame_dir = folder / "{:06d}".format(number)
+                frame_dir.mkdir()
+                _run([
+                    _binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
+                    "-ss", "{:.6f}".format(start), "-i", str(video),
+                    "-t", "{:.6f}".format(end - start),
+                    "-vf", "fps={:.6f},scale={}:{}".format(fps, width, -2),
+                    "-q:v", "3", str(frame_dir / "%05d.jpg"),
+                ])
+                paths = sorted(frame_dir.glob("*.jpg"))
+                if not paths:
+                    raise VisionError("FFmpeg produced no frames for {:.3f}s".format(start))
                 try:
-                    with Image.open(path) as image:
-                        images.append(image.convert("RGB"))
-                except OSError as error:
-                    raise VisionError("could not read model frame {}: {}".format(path, error)) from error
-            for trigger in triggers:
-                if report:
-                    report("Checking {!r} in {:.3f}s–{:.3f}s.".format(trigger, start, end))
-                if _answer(generate, apply_chat_template, loaded_model, processor, mx,
-                           images, trigger.strip(), max_tokens):
-                    events.append({
-                        "start": round(start, 3),
-                        "end": round(end, 3),
-                        "label": trigger.strip(),
-                        "severity": "model-candidate",
-                    })
-    if not events:
-        raise VisionError(
-            "the model found no candidate events. This does not establish that "
-            "the video is free of the requested triggers; no subtitle was written."
-        )
+                    from PIL import Image
+                except ImportError as error:
+                    raise VisionError(
+                        "--model-trigger needs Pillow; install the optional vision dependencies"
+                    ) from error
+                images = []
+                for path in paths:
+                    try:
+                        with Image.open(path) as image:
+                            images.append(image.convert("RGB"))
+                    except OSError as error:
+                        raise VisionError("could not read model frame {}: {}".format(path, error)) from error
+                for trigger_idx, trigger in enumerate(triggers):
+                    progress.start_trigger(trigger_idx, trigger)
+                    if _answer(generate, apply_chat_template, loaded_model, processor, mx,
+                               images, trigger.strip(), max_tokens):
+                        events.append({
+                            "start": round(start, 3),
+                            "end": round(end, 3),
+                            "label": trigger.strip(),
+                            "severity": "model-candidate",
+                        })
+                    progress.finish_trigger()
+        if not events:
+            raise VisionError(
+                "the model found no candidate events. This does not establish that "
+                "the video is free of the requested triggers; no subtitle was written."
+            )
     notes = [
         "Model-generated candidate timestamps cover whole {:.1f}s chunks; inspect and correct them before relying on the output.".format(chunk_seconds),
         "The scan sampled video at {:.3g} frame{} per second; brief events can be missed.".format(

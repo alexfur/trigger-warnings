@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import signal
 import sys
 import tempfile
 import types
@@ -94,6 +95,46 @@ class ScanTests(unittest.TestCase):
                 with self.assertRaises(vision.VisionError):
                     vision.scan_video(self.video, triggers, **kwargs)
         self.backend.assert_not_called()
+
+    def test_cli_json_result_and_human_progress_use_separate_streams(self):
+        self.enter_patch("_answer", return_value=True)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli.keychain, "hydrate", return_value={}), \
+                mock.patch.object(cli, "_obtain_subtitles", return_value=(
+                    "1\n00:00:01,000 --> 00:00:05,000\nSynthetic dialogue\n", 25000, None, None)), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = cli.main(["--json", "--video", str(self.video),
+                               "--model-trigger", "red", "--output",
+                               str(self.video.parent / "warnings.ass")])
+        self.assertEqual(status, 0)
+        self.assertTrue(json.loads(out.getvalue())["ok"])
+        self.assertIn("Loading model", err.getvalue())
+        self.assertIn("100.0% Scan complete", err.getvalue())
+
+    def test_model_load_failure_shows_progress_and_failure(self):
+        err = io.StringIO()
+
+        def fail_loading(*args):
+            self.assertIn("Loading model", err.getvalue())
+            raise vision.VisionError("synthetic loading failure")
+
+        self.backend.side_effect = fail_loading
+        with contextlib.redirect_stderr(err):
+            with self.assertRaisesRegex(vision.VisionError, "loading failure"):
+                vision.scan_video(self.video, ["red"], report=mock.Mock())
+        self.assertIn("Scan failed", err.getvalue())
+        self.assertNotIn("Scan complete", err.getvalue())
+
+    def test_sigterm_cancels_inference_and_cleans_frames(self):
+        self.enter_patch("_answer", side_effect=lambda *args: signal.raise_signal(signal.SIGTERM))
+        original = signal.getsignal(signal.SIGTERM)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(KeyboardInterrupt):
+                vision.scan_video(self.video, ["red"], report=mock.Mock())
+        self.assertIn("Scan cancelled", err.getvalue())
+        self.assertEqual(signal.getsignal(signal.SIGTERM), original)
+        self.assertTrue(all(not path.exists() for path in self.frame_folders))
 
 
 class ModelCliTests(unittest.TestCase):

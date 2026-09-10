@@ -68,6 +68,31 @@ separate `--model-trigger` option. Quote paths containing spaces.
   --output "movie.warnings.ass"
 ```
 
+The scan displays a live bar on stderr, including a heartbeat while the model
+loads or checks frames. It shows completed checks, elapsed time and an estimated
+time remaining. Captured output gets a bar snapshot every five seconds.
+
+For a live bar when an agent runs a scan in Maestri, open a visible terminal:
+
+```bash
+.venv/bin/python scripts/scan-in-terminal.py --json \
+  --video "movie.mkv" --model-trigger 'blood' --output "movie.warnings.ass"
+```
+
+Keep stderr attached to that terminal. Agent tool panels can truncate or delay
+output. The launcher starts the scan once; its exit status only reports whether
+the terminal opened. Read the scan's final result in the new terminal.
+
+`--json` keeps the final result on stdout. Add `--progress-json` only when a
+program needs JSON progress on stderr; this replaces the visual bar:
+
+```bash
+.venv/bin/trigger-warnings --json --progress-json \
+  --video "movie.mkv" \
+  --model-trigger 'blood' \
+  --output "movie.warnings.ass"
+```
+
 This example uses an English subtitle track embedded in the video. If you
 have a separate SRT file, add `--subtitles "movie.srt"` to the command.
 
@@ -126,6 +151,7 @@ measures SmolVLM2 on synthetic footage, not Qwen or real trigger-detection accur
 | `--model-width` | `384` | Extracted frame width in pixels |
 | `--model-max-tokens` | `16` | Maximum length of each model answer |
 | `--model-revision` | Unspecified | Pin a model revision |
+| `--progress-json` | Off | Emit structured progress on stderr |
 
 ## Use DoesTheDogDie timestamps
 
@@ -227,7 +253,13 @@ To try this route without preparing files, use the synthetic examples:
 - `--provenance FILE.json` saves source, timing settings and result counts.
 - `--verify FILE.png` renders one preview frame; it requires `--video` and FFmpeg.
 - `--dry-run` writes no files. With a local model, it still runs the scan.
-- `--json` returns one result at the end; omit it to see progress messages.
+- `--json` returns one result on stdout at the end. Model progress uses stderr.
+- `--progress-json` emits structured progress events as JSON lines on stderr
+  (useful with `--json` mode). Fields: `type: "progress"`,
+  `event: "stage"|"trigger"|"heartbeat"|"finish"`, `stage`,
+  `chunk`, `total_chunks`, `trigger_index`, `total_triggers`, `trigger_name`,
+  `percent` and `elapsed_seconds`. A finish event also reports failure or
+  cancellation in `stage`; the final stdout result determines success.
 - OpenSubtitles supplies dialogue only through `--os-search` and `--os-file`.
   It needs your own account and API key.
 
