@@ -1,7 +1,9 @@
 # Release
 
-The first public candidate is `0.4.0a1`. Source installation remains available
-until the package has been published and verified on PyPI.
+The next candidate is `0.4.0a2`, currently available from source only. PyPI
+and TestPyPI contain `0.4.0a1`, which does not include the Gemini backend.
+Keep source installation instructions until the new package has been
+published and verified on PyPI.
 
 ## One-time account setup
 
@@ -42,7 +44,7 @@ the repository owner makes the repository public separately.
    `[vision]` extra and run `scripts/smoke_vision.py` with that environment's
    Python. This test downloads the default model if necessary.
 4. Commit and push with the repository's approved Git workflow. Create a
-   version tag matching both declarations, such as `v0.4.0a1`.
+   version tag matching both declarations, such as `v0.4.0a2`.
 
 A matching tag starts `release.yml`. The workflow first runs the reusable
 test workflow: unit tests on Ubuntu and macOS, a clean base-wheel install,
@@ -60,7 +62,7 @@ Install the staged alpha in a fresh environment:
 
 ```bash
 python -m pip install --index-url https://test.pypi.org/simple/ \
-  --no-deps 'trigger-warnings==0.4.0a1'
+  --no-deps 'trigger-warnings==0.4.0a2'
 trigger-warnings --version
 ```
 
@@ -71,7 +73,7 @@ regular PyPI separately.
 After verification, dispatch the release workflow on the same tag:
 
 ```bash
-gh workflow run release.yml --ref v0.4.0a1 -f target=pypi
+gh workflow run release.yml --ref v0.4.0a2 -f target=pypi
 ```
 
 The production run repeats the required checks, downloads the staged sdist
@@ -82,15 +84,20 @@ rebuilding them.
 Verify the production install before announcing the release:
 
 ```bash
-python -m pip install 'trigger-warnings==0.4.0a1'
+python -m pip install 'trigger-warnings==0.4.0a2'
 trigger-warnings --version
 ```
 
 For local scanning on Apple Silicon, install
-`trigger-warnings[vision]==0.4.0a1`. Update the README's install instructions
+`trigger-warnings[vision]==0.4.0a2`. Update the README's install instructions
 only after this succeeds.
 
 ## Failed releases
+
+- If every job fails before any step runs, read the check annotations. The
+  September 2026 runs were blocked by GitHub account billing or spending
+  limits, including the TestPyPI publish job. Resolve the account restriction
+  before retrying; this error does not diagnose PyPI credentials.
 
 - A Trusted Publishing error usually means an account-side publisher is absent
   or does not match the repository, workflow or environment. Correct the

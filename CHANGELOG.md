@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here.
 
+## 0.4.0a2 (unreleased)
+
+### Added
+
+- Optional Gemini cloud video scanning, installed with the `gemini` extra.
+- Direct local video decoding through PyAV, included in the `vision` extra.
+- A batch scanning script that accepts explicit video paths and triggers.
+
+### Changed
+
+- The README distinguishes the published alpha from source-only features,
+  separates local and cloud scanning, and removes unmeasured speed claims.
+- Gemini sanitisation failures stop the scan before upload. Uploading the
+  original video requires the explicit `--no-gemini-sanitize` option.
+- The personal episode runner has been replaced with `scripts/scan-videos.py`.
+
+### Fixed
+
+- Gemini cleanup attempts to delete every uploaded file, including ingestion
+  retries, and reports deletion failures without claiming guaranteed removal.
+- Gemini tests run under the same dependency-free unittest runner as CI.
+
 ## 0.4.0a1
 
 First public alpha candidate. Model detections remain experimental.
