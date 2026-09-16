@@ -108,12 +108,14 @@ after the scan, but deletion is best-effort, not guaranteed.
 ### Requirements
 
 - Google AI Studio API key.
-- The `gemini` extra installed from source (not yet available on PyPI).
+- Python 3.10 or newer (the `google-genai` package requires it).
+- The `gemini` extra, available through a source install.
 
-### Install from source
+### Install from source (experimental)
 
 The current PyPI release (0.4.0a1) does not include Gemini or video-encoding
-support. Clone the repository for the latest features:
+support. Clone the repository for the latest features. This install path is
+experimental and tracks the development branch:
 
 ```bash
 brew install ffmpeg
@@ -121,6 +123,13 @@ git clone https://github.com/alexfur/trigger-warnings.git
 cd trigger-warnings
 python3 -m pip install '.[gemini]'
 export GEMINI_API_KEY="your-api-key"
+```
+
+The pinned PyPI base package remains available for the subtitle-merging and
+DoesTheDogDie workflows:
+
+```bash
+pip install trigger-warnings
 ```
 
 ### Scan
