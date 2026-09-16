@@ -11,10 +11,9 @@ To guard user privacy and reduce upload size:
    than uploading the original file.  Pass ``--no-gemini-sanitize`` (CLI) or
    ``sanitize=False`` (API) to skip local sanitisation.
 2. Files are uploaded under a randomized anonymous hash name.
-3. Every file successfully uploaded (including retries) is tracked and
-   deleted from Google's servers in a ``finally:`` block after inference
-   completes.  Cleanup failures are reported but never mask the primary scan
-   result.
+3. The tool tracks every uploaded file, including retries, and attempts to
+   delete each one in a ``finally:`` block after inference. Cleanup failures
+   are reported without masking the primary scan result.
 """
 
 from collections import namedtuple
@@ -105,6 +104,8 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
         str(temp_path),
     ]
 
+    proc = None
+    completed = False
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         speed = "1x"
@@ -124,21 +125,35 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
                     pass
         proc.wait()
         if proc.returncode != 0:
-            if temp_path.exists():
-                temp_path.unlink()
             if report:
                 report("ffmpeg sanitization exited with non-zero status.")
             return None
         if progress:
             progress.set_custom_progress("Sanitizing video", fraction=1.0, detail="done")
+        completed = True
         return temp_path
     except Exception as exc:
-        if temp_path.exists():
-            temp_path.unlink()
         if report:
             report(f"ffmpeg sanitization error ({exc}).")
         return None
-
+    finally:
+        # A cancelled transcode must stop before its temporary file is removed.
+        try:
+            if proc is not None:
+                try:
+                    if proc.poll() is None:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait()
+                finally:
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+        finally:
+            if not completed:
+                temp_path.unlink(missing_ok=True)
 
 
 def scan_video_gemini(
@@ -158,7 +173,7 @@ def scan_video_gemini(
 
     Uploads the video via the File API, prompts Gemini with structured JSON
     schema for exact start and end timestamps of the requested triggers, and
-    cleans up the uploaded file immediately after.
+    attempts to delete all uploaded files afterwards.
     """
     video = Path(video).resolve()
     if not video.is_file():
@@ -187,7 +202,7 @@ def scan_video_gemini(
         except ImportError as err:
             raise GeminiError(
                 "Gemini scanning requires google-genai and pydantic. "
-                "Install them with `pip install 'trigger-warnings[gemini]'`."
+                "From a source checkout, install them with `python -m pip install '.[gemini]'`."
             ) from err
 
         client = genai.Client(api_key=effective_api_key)

@@ -1,28 +1,31 @@
 # Trigger Warnings
 
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=for-the-badge)](pyproject.toml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/alexfur/trigger-warnings/tests.yml?branch=main&style=for-the-badge)](https://github.com/alexfur/trigger-warnings/actions/workflows/tests.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/trigger-warnings?style=for-the-badge)](https://pypi.org/project/trigger-warnings/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=flat)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/trigger-warnings?style=flat)](https://pypi.org/project/trigger-warnings/)
 
 Spoiler-free trigger warnings for local video files. This is an experimental
 alpha. It detects or imports known triggers and inserts a `TRIGGER INCOMING`
-banner into the subtitle track, without naming the trigger on screen.
+banner into a new ASS or SRT subtitle file, without naming the trigger on
+screen. Load the file in your video player.
 
 > [!WARNING]
-> Detection is experimental. AI results are candidate timestamps, not verified
-> detections. The scanner can miss brief events or flag scenes incorrectly.
-> No candidates means no subtitle is written; it does not mean the video is
-> free of your triggers. A warning ending is never an all-clear. Review
-> output before relying on it.
+> AI detections can miss events or flag scenes incorrectly. Review timestamps
+> before relying on them. No candidates does not mean the video is trigger-free;
+> a warning ending is never an all-clear.
 
-[![Preview](assets/preview.png)](assets/demo.gif)
+[![Synthetic preview: an advance warning above ordinary dialogue subtitles](assets/preview.png)](assets/demo.gif)
 
 [Scan locally with AI](#scan-a-video-with-local-ai) ·
 [Cloud scan with Gemini](#cloud-scan-with-google-gemini) ·
 [Supply your own timestamps](#supply-your-own-timestamps) ·
-[Recipes](#recipes)
+[Recipes](#recipes) ·
+[CI checks](https://github.com/alexfur/trigger-warnings/actions/workflows/tests.yml)
 
+
+The current source version is `0.4.0a2` (unreleased). PyPI serves `0.4.0a1`,
+which does not include Gemini or the newer PyAV decoding backend. Use the
+source instructions below for the latest features.
 
 ## Scan a video with local AI
 
@@ -42,13 +45,15 @@ playback warning system.
 brew install ffmpeg
 git clone https://github.com/alexfur/trigger-warnings.git
 cd trigger-warnings
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 python3 -m pip install '.[vision]'
 ```
 
 FFmpeg reads the video container. The `vision` extra installs local AI model
-support on Apple Silicon. The first scan downloads the model from Hugging Face;
-later runs reuse the cached files.
+support on Apple Silicon. The default model is
+`mlx-community/SmolVLM2-500M-Video-Instruct-mlx`. The first scan downloads it
+from Hugging Face; later runs reuse the cached files.
 
 ### Choose the video and triggers
 
@@ -73,9 +78,9 @@ When the command reports `Wrote movie.warnings.ass`, open the video in VLC
 and select **Subtitle → Add Subtitle File** to load it. Warnings start 20
 seconds before each detected event by default; `--lead` changes that interval.
 
-The local model checks one frame per second in 10-second chunks. When any
-frame in a chunk matches, the whole chunk is marked positive. It can miss
-brief events or flag scenes incorrectly.
+By default, the local model checks one frame per second in 10-second chunks
+and marks each positive chunk as a candidate interval. It checks images, not
+audio, and can miss brief events or flag scenes incorrectly.
 
 > [!IMPORTANT]
 > The video and original subtitle file remain unchanged. Existing output files
@@ -109,13 +114,19 @@ trigger-warnings \
 The cloud provider sends video and audio to Google for analysis. A sanitisation
 pass runs locally first (metadata stripping and downscaling). If sanitisation
 cannot complete, the scan aborts before any upload. You can skip sanitisation
-with `--no-gemini-sanitize`, but review what gets sent in that case. Google's
-servers attempt to delete the remote file after the scan completes.
+with `--no-gemini-sanitize` to upload the original file. The tool attempts to
+delete every uploaded file after scanning and reports deletion failures.
+Deletion is best-effort, not guaranteed. Metadata removal does not anonymise
+the video or audio content.
+
+Runtime depends on video length, encoding, connection speed and model
+availability. API usage may incur charges on your Google account.
 
 ### Requirements
 
 - Google AI Studio API key.
 - Python 3.10 or newer (the `google-genai` package requires it).
+- FFmpeg on your PATH (the command below uses Homebrew on macOS).
 - The `gemini` extra, available through a source install.
 
 ### Install from source (experimental)
@@ -128,7 +139,8 @@ path is experimental and tracks the development branch:
 brew install ffmpeg
 git clone https://github.com/alexfur/trigger-warnings.git
 cd trigger-warnings
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 python3 -m pip install '.[gemini]'
 export GEMINI_API_KEY="your-api-key"
 ```
@@ -158,7 +170,9 @@ If you already have timestamps, provide them directly without running an AI
 model. The base PyPI package handles this without any AI dependencies:
 
 ```bash
-pip install trigger-warnings==0.4.0a1
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install 'trigger-warnings==0.4.0a1'
 ```
 
 Save this as `events.json`:
@@ -179,7 +193,8 @@ trigger-warnings --subtitles "movie.srt" \
   --events events.json --output "movie.warnings.ass"
 ```
 
-To try this route without preparing files, use the bundled examples:
+If you cloned the source repository above, run the bundled examples from its
+root directory:
 
 ```bash
 trigger-warnings --subtitles examples/dialogue.srt \
@@ -198,12 +213,8 @@ Import community-contributed timestamps instead of running a local model or
 curating timestamps by hand. This requires an API key from
 [DoesTheDogDie](https://www.doesthedogdie.com/api).
 
-To install the lightweight base package without AI model dependencies:
-
-```bash
-brew install ffmpeg
-python3 -m pip install trigger-warnings
-```
+Use the base-package installation from [Supply your own timestamps](#supply-your-own-timestamps).
+An existing SRT file needs no FFmpeg or AI dependencies.
 
 1. Get your own [DDD API key](https://www.doesthedogdie.com/api).
 2. Run the setup command in your terminal and follow the hidden prompts:
@@ -306,49 +317,15 @@ follow the [agent skill](skills/trigger-warnings/SKILL.md): check `ok`, read
 
 ```mermaid
 flowchart LR
-    subgraph Inputs["Video & Trigger Sources"]
-        direction TB
-        V["Video File (.mkv / .mp4)"]
-        subgraph Triggers["Trigger Definitions"]
-            M["Local VLM Scan<br/>(SmolVLM2 / Qwen)"]
-            D["DoesTheDogDie<br/>API Ratings"]
-            E["Custom JSON<br/>Timestamps"]
-        end
-        subgraph Subs["Dialogue Track"]
-            S1["Embedded Stream"]
-            S2["External .srt"]
-            S3["OpenSubtitles"]
-        end
-    end
-
-    subgraph Core["trigger-warnings Pipeline"]
-        direction TB
-        P["Prompt & Prefix Cache<br/>(PromptCacheState)"]
-        W["Window Builder<br/>(Lead & Tail Clamping)"]
-        R["Deterministic Merger<br/>(No Spoiler Text)"]
-    end
-
-    subgraph Outputs["Generated Tracks"]
-        direction TB
-        O1["Merged Subtitles<br/>(.ass / .srt)<br/>'TRIGGER INCOMING' + Dialogue"]
-        O2["Warnings-Only Track<br/>(--warnings-output)"]
-        O3["Provenance Log<br/>(--provenance .json)"]
-        O4["Verification Frame<br/>(--verify .png)"]
-    end
-
-    V --> P
-    M --> P
-    P --> W
-    D --> W
-    E --> W
-    W --> R
-    S1 --> R
-    S2 --> R
-    S3 --> R
-    R --> O1
-    R --> O2
-    R --> O3
-    R --> O4
+    V[Video] --> L[Local model]
+    V --> G[Gemini upload and scan]
+    L --> W[Advance warning windows]
+    G --> W
+    D[DoesTheDogDie timestamps] --> W
+    E[Supplied JSON timestamps] --> W
+    W --> R[Subtitle merger]
+    S[Dialogue subtitles] --> R
+    R --> O[ASS or SRT subtitles]
 ```
 
 

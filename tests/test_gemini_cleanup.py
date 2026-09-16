@@ -2,6 +2,7 @@
 
 import json
 import unittest
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -37,7 +38,16 @@ def _make_mock_client(upload_name="files/scan_abc123", state_name="ACTIVE"):
     return client
 
 
-class TestFailClosedSanitisation(unittest.TestCase):
+class GeminiCleanupTestCase(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        self.video = self.directory / "movie.mp4"
+        self.video.write_bytes(b"synthetic video")
+
+
+class TestFailClosedSanitisation(GeminiCleanupTestCase):
     """When sanitize=True (default), missing ffmpeg must abort, never upload original."""
 
     def _client_factory(self, api_key):
@@ -45,9 +55,8 @@ class TestFailClosedSanitisation(unittest.TestCase):
 
     def test_no_ffmpeg_raises_not_upload(self):
         """sanitize=True + no ffmpeg on PATH → GeminiError, zero uploads."""
-        video = Path("/tmp/fake_movie.mp4")
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("shutil.which", return_value=None), \
+        video = self.video
+        with mock.patch("shutil.which", return_value=None), \
              mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             with self.assertRaises(GeminiError) as ctx:
                 scan_video_gemini(video, ["eyes"], sanitize=True,
@@ -57,9 +66,8 @@ class TestFailClosedSanitisation(unittest.TestCase):
     def test_no_ffmpeg_no_upload_calls(self):
         """Verify client upload is never called when ffmpeg is missing."""
         client = mock.Mock()
-        video = Path("/tmp/fake_movie.mp4")
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("shutil.which", return_value=None), \
+        video = self.video
+        with mock.patch("shutil.which", return_value=None), \
              mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             with self.assertRaises(GeminiError):
                 scan_video_gemini(video, ["eyes"], sanitize=True,
@@ -68,9 +76,8 @@ class TestFailClosedSanitisation(unittest.TestCase):
 
     def test_ffmpeg_error_raises_not_upload(self):
         """sanitize_video returns None on ffmpeg error → scan aborts."""
-        video = Path("/tmp/fake_movie.mp4")
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("trigger_warnings.gemini.sanitize_video", return_value=None), \
+        video = self.video
+        with mock.patch("trigger_warnings.gemini.sanitize_video", return_value=None), \
              mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             with self.assertRaises(GeminiError) as ctx:
                 scan_video_gemini(video, ["eyes"], sanitize=True,
@@ -79,11 +86,10 @@ class TestFailClosedSanitisation(unittest.TestCase):
 
     def test_sanitize_false_escapes_hatch(self):
         """sanitize=False skips sanitisation and uploads original."""
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
         client = _make_mock_client()
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             scan = scan_video_gemini(
                 video, ["eyes"],
                 sanitize=False,
@@ -94,9 +100,8 @@ class TestFailClosedSanitisation(unittest.TestCase):
 
     def test_fail_closed_message_mentions_cli_flag(self):
         """Error message references --no-gemini-sanitize for CLI users."""
-        video = Path("/tmp/fake_movie.mp4")
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("shutil.which", return_value=None), \
+        video = self.video
+        with mock.patch("shutil.which", return_value=None), \
              mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             with self.assertRaises(GeminiError) as ctx:
                 scan_video_gemini(video, ["eyes"], sanitize=True,
@@ -104,11 +109,11 @@ class TestFailClosedSanitisation(unittest.TestCase):
             self.assertIn("--no-gemini-sanitize", str(ctx.exception))
 
 
-class TestBothRetryUploadsDeleted(unittest.TestCase):
+class TestBothRetryUploadsDeleted(GeminiCleanupTestCase):
     """When ingestion fails on attempt 1 and succeeds on attempt 2, both files are deleted."""
 
     def test_two_uploads_both_deleted(self):
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
         file_attempt1 = mock.Mock()
@@ -137,8 +142,7 @@ class TestBothRetryUploadsDeleted(unittest.TestCase):
         client.files.get.return_value = file_attempt2
         client.models.generate_content.return_value = mock_response
 
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
              mock.patch("time.sleep"):
             scan_video_gemini(
                 video, ["eyes"],
@@ -153,11 +157,11 @@ class TestBothRetryUploadsDeleted(unittest.TestCase):
         self.assertIn("files/attempt2_ok", deleted_names)
 
 
-class TestFailedInferenceCleanup(unittest.TestCase):
+class TestFailedInferenceCleanup(GeminiCleanupTestCase):
     """Upload succeeds but model call fails → all uploads still cleaned up."""
 
     def test_model_error_deletes_uploads(self):
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
         mock_file = mock.Mock()
@@ -170,8 +174,7 @@ class TestFailedInferenceCleanup(unittest.TestCase):
         client.files.get.return_value = mock_file
         client.models.generate_content.side_effect = RuntimeError("model exploded")
 
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             with self.assertRaises(RuntimeError):
                 scan_video_gemini(
                     video, ["eyes"],
@@ -182,11 +185,11 @@ class TestFailedInferenceCleanup(unittest.TestCase):
         client.files.delete.assert_called_once_with(name="files/scan_xyz")
 
 
-class TestDeletionFailureReporting(unittest.TestCase):
+class TestDeletionFailureReporting(GeminiCleanupTestCase):
     """Cleanup failure is reported via report() without masking the primary result."""
 
     def test_delete_failure_reported_still_returns(self):
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
         mock_file = mock.Mock()
@@ -211,8 +214,7 @@ class TestDeletionFailureReporting(unittest.TestCase):
         client.models.generate_content.return_value = mock_response
 
         report_lines = []
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             scan = scan_video_gemini(
                 video, ["eyes"],
                 sanitize=False,
@@ -229,7 +231,7 @@ class TestDeletionFailureReporting(unittest.TestCase):
 
     def test_delete_failure_not_masking_error(self):
         """When model call fails AND deletion fails, the original error propagates."""
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
         mock_file = mock.Mock()
@@ -244,8 +246,7 @@ class TestDeletionFailureReporting(unittest.TestCase):
         client.models.generate_content.side_effect = RuntimeError("model broke")
 
         report_lines = []
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}):
             with self.assertRaises(RuntimeError) as ctx:
                 scan_video_gemini(
                     video, ["eyes"],
@@ -261,7 +262,7 @@ class TestDeletionFailureReporting(unittest.TestCase):
 
     def test_report_callback_error_does_not_mask_cleanup(self):
         """If report() raises during cleanup, remaining files are still deleted."""
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
         file1 = mock.Mock()
@@ -291,8 +292,7 @@ class TestDeletionFailureReporting(unittest.TestCase):
             if "cleaned up" in msg.lower() or "could not delete" in msg.lower():
                 raise RuntimeError("reporter broke")
 
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
              mock.patch("time.sleep"):
             scan_video_gemini(
                 video, ["eyes"],
@@ -305,19 +305,18 @@ class TestDeletionFailureReporting(unittest.TestCase):
         self.assertEqual(client.files.delete.call_count, 2)
 
 
-class TestLocalTempCleanup(unittest.TestCase):
+class TestLocalTempCleanup(GeminiCleanupTestCase):
     """Sanitised temp file is cleaned up even when scan raises."""
 
     def test_temp_deleted_on_success(self):
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
-        tmp_file = Path("/tmp/scan_tmp_test.mp4")
+        tmp_file = self.directory / "scan_tmp_test.mp4"
         tmp_file.write_bytes(b"sanitised")
 
         client = _make_mock_client()
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
              mock.patch("trigger_warnings.gemini.sanitize_video", return_value=tmp_file):
             scan_video_gemini(
                 video, ["eyes"],
@@ -327,17 +326,16 @@ class TestLocalTempCleanup(unittest.TestCase):
         self.assertFalse(tmp_file.exists())
 
     def test_temp_deleted_on_error(self):
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
-        tmp_file = Path("/tmp/scan_tmp_err.mp4")
+        tmp_file = self.directory / "scan_tmp_err.mp4"
         tmp_file.write_bytes(b"sanitised")
 
         client = mock.Mock()
         client.files.upload.side_effect = RuntimeError("upload boom")
 
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
              mock.patch("trigger_warnings.gemini.sanitize_video", return_value=tmp_file):
             with self.assertRaises(RuntimeError):
                 scan_video_gemini(
@@ -349,17 +347,16 @@ class TestLocalTempCleanup(unittest.TestCase):
 
     def test_temp_deleted_on_keyboard_interrupt(self):
         """Temp file cleaned up when KeyboardInterrupt fires after sanitisation."""
-        video = Path("/tmp/fake_movie.mp4")
+        video = self.video
         video.write_bytes(b"dummy")
 
-        tmp_file = Path("/tmp/scan_tmp_ki.mp4")
+        tmp_file = self.directory / "scan_tmp_ki.mp4"
         tmp_file.write_bytes(b"sanitised")
 
         client = mock.Mock()
         client.files.upload.side_effect = KeyboardInterrupt()
 
-        with mock.patch.object(Path, "is_file", return_value=True), \
-             mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
+        with mock.patch("os.environ", {"GEMINI_API_KEY": "test"}), \
              mock.patch("trigger_warnings.gemini.sanitize_video", return_value=tmp_file):
             with self.assertRaises(KeyboardInterrupt):
                 scan_video_gemini(
@@ -368,6 +365,27 @@ class TestLocalTempCleanup(unittest.TestCase):
                     client_factory=lambda api_key: client,
                 )
         self.assertFalse(tmp_file.exists())
+
+
+class TestInterruptedSanitisation(GeminiCleanupTestCase):
+    def test_interrupt_stops_ffmpeg_and_removes_partial_file(self):
+        process = mock.MagicMock()
+        process.stdout.__iter__.side_effect = KeyboardInterrupt()
+        process.poll.return_value = None
+        create_temp = tempfile.NamedTemporaryFile
+
+        with mock.patch("trigger_warnings.gemini.shutil.which", return_value="ffmpeg"), \
+             mock.patch("trigger_warnings.media.probe", side_effect=ValueError("synthetic input")), \
+             mock.patch("trigger_warnings.gemini.tempfile.NamedTemporaryFile",
+                        side_effect=lambda **kwargs: create_temp(dir=self.directory, **kwargs)), \
+             mock.patch("trigger_warnings.gemini.subprocess.Popen", return_value=process):
+            with self.assertRaises(KeyboardInterrupt):
+                sanitize_video(self.video)
+
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=5)
+        process.stdout.close.assert_called_once()
+        self.assertEqual(list(self.directory.glob("scan_*.mp4")), [])
 
 
 if __name__ == "__main__":
