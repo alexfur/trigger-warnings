@@ -1,16 +1,20 @@
 """Optional cloud video trigger scanning through Google Gemini API.
 
 This backend provides single-shot, whole-movie trigger detection by uploading
-the video to Google's File API and querying Gemini 2.0 Flash (or 1.5 Flash)
-for structured timestamped detections.
+the video to Google's File API and querying Gemini Flash for structured
+timestamped detections.
 
-To guard user privacy and avoid triggering automated piracy or copyright
-refusals:
+To guard user privacy and reduce upload size:
 1. Videos are sanitized locally with FFmpeg (metadata and rip tags stripped,
-   and downscaled to 480p to cut file size by ~80%).
+   and downscaled to 480p to reduce file size).  When ``sanitize=True``
+   (the default) a missing or broken FFmpeg causes the scan to abort rather
+   than uploading the original file.  Pass ``--no-gemini-sanitize`` (CLI) or
+   ``sanitize=False`` (API) to skip local sanitisation.
 2. Files are uploaded under a randomized anonymous hash name.
-3. The uploaded file is immediately deleted from Google's servers in a
-   `finally:` block after inference completes.
+3. Every file successfully uploaded (including retries) is tracked and
+   deleted from Google's servers in a ``finally:`` block after inference
+   completes.  Cleanup failures are reported but never mask the primary scan
+   result.
 """
 
 from collections import namedtuple
@@ -62,7 +66,7 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         if report:
-            report("ffmpeg not found on PATH; skipping local sanitization/downscaling.")
+            report("ffmpeg not found on PATH; sanitisation unavailable.")
         return None
 
     duration = None
@@ -123,7 +127,7 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
             if temp_path.exists():
                 temp_path.unlink()
             if report:
-                report("ffmpeg sanitization exited with error; using original file.")
+                report("ffmpeg sanitization exited with non-zero status.")
             return None
         if progress:
             progress.set_custom_progress("Sanitizing video", fraction=1.0, detail="done")
@@ -132,8 +136,9 @@ def sanitize_video(video_path, target_height=480, report=None, progress=None):
         if temp_path.exists():
             temp_path.unlink()
         if report:
-            report(f"ffmpeg sanitization error ({exc}); using original file.")
+            report(f"ffmpeg sanitization error ({exc}).")
         return None
+
 
 
 def scan_video_gemini(
@@ -205,14 +210,21 @@ def scan_video_gemini(
                      json_progress=json_progress) as progress:
         sanitized_tmp = None
         upload_path = video
-        if sanitize:
-            progress.set_custom_progress("Sanitizing video", fraction=0.0)
-            sanitized_tmp = sanitize_video(video, target_height=target_height, report=report, progress=progress)
-            if sanitized_tmp is not None:
-                upload_path = sanitized_tmp
-
         uploaded_file = None
+        uploaded_names = []
         try:
+            if sanitize:
+                progress.set_custom_progress("Sanitizing video", fraction=0.0)
+                sanitized_tmp = sanitize_video(video, target_height=target_height, report=report, progress=progress)
+                if sanitized_tmp is not None:
+                    upload_path = sanitized_tmp
+                else:
+                    raise GeminiError(
+                        "Local video sanitisation failed (ffmpeg missing or error). "
+                        "Cannot upload un-sanitised video. Install ffmpeg or pass "
+                        "--no-gemini-sanitize to skip local sanitisation."
+                    )
+
             size_mb = upload_path.stat().st_size / (1024 * 1024)
             progress.set_custom_progress(f"Uploading video ({size_mb:.1f} MB)", fraction=0.0)
             if report:
@@ -242,6 +254,7 @@ def scan_video_gemini(
                         )
                     uploaded_file = future.result()
 
+                uploaded_names.append(uploaded_file.name)
                 progress.set_custom_progress("Uploaded video", fraction=1.0, detail="complete")
 
                 progress.set_custom_progress("Processing on Google Cloud", fraction=0.25, detail="ingesting...")
@@ -429,14 +442,21 @@ def scan_video_gemini(
                 except OSError:
                     pass
 
-            if uploaded_file is not None and hasattr(client, "files"):
-                try:
-                    client.files.delete(name=uploaded_file.name)
-                    if report:
-                        report(f"Cleaned up remote file {uploaded_file.name} from Google Cloud.")
-                except Exception as cleanup_err:
-                    if report:
-                        report(f"Note: Could not immediately delete remote file {uploaded_file.name}: {cleanup_err}")
+            if uploaded_names and hasattr(client, "files"):
+                for name in uploaded_names:
+                    try:
+                        client.files.delete(name=name)
+                        if report:
+                            try:
+                                report(f"Cleaned up remote file {name} from Google Cloud.")
+                            except Exception:
+                                pass
+                    except Exception as cleanup_err:
+                        if report:
+                            try:
+                                report(f"Note: Could not delete remote file {name}: {cleanup_err}")
+                            except Exception:
+                                pass
 
     notes = [
         f"Generated by Google Gemini ({model}) cloud video analysis.",
