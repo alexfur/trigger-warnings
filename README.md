@@ -5,16 +5,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/trigger-warnings?style=for-the-badge)](https://pypi.org/project/trigger-warnings/)
 
-Spoiler-free trigger warnings for local video files. This tool detects or
-imports known triggers and inserts a `TRIGGER INCOMING` banner into the
-subtitle track at the right moment, without naming the trigger on screen.
+Spoiler-free trigger warnings for local video files. This is an experimental
+alpha. It detects or imports known triggers and inserts a `TRIGGER INCOMING`
+banner into the subtitle track, without naming the trigger on screen.
 
 > [!WARNING]
 > Detection is experimental. AI results are candidate timestamps, not verified
-> detections. The scanner checks images, not audio. It can miss brief events
-> or flag scenes incorrectly. No candidates means no subtitle is written; it
-> does not mean the video is free of your triggers. A warning ending is never
-> an all-clear. Review output before relying on it.
+> detections. The scanner can miss brief events or flag scenes incorrectly.
+> No candidates means no subtitle is written; it does not mean the video is
+> free of your triggers. A warning ending is never an all-clear. Review
+> output before relying on it.
 
 [![Preview](assets/preview.png)](assets/demo.gif)
 
@@ -40,7 +40,10 @@ playback warning system.
 
 ```bash
 brew install ffmpeg
-python3 -m pip install 'trigger-warnings[vision]'
+git clone https://github.com/alexfur/trigger-warnings.git
+cd trigger-warnings
+python3 -m venv .venv && source .venv/bin/activate
+python3 -m pip install '.[vision]'
 ```
 
 FFmpeg reads the video container. The `vision` extra installs local AI model
@@ -69,6 +72,10 @@ estimated time remaining.
 When the command reports `Wrote movie.warnings.ass`, open the video in VLC
 and select **Subtitle → Add Subtitle File** to load it. Warnings start 20
 seconds before each detected event by default; `--lead` changes that interval.
+
+The local model checks one frame per second in 10-second chunks. When any
+frame in a chunk matches, the whole chunk is marked positive. It can miss
+brief events or flag scenes incorrectly.
 
 > [!IMPORTANT]
 > The video and original subtitle file remain unchanged. Existing output files
@@ -99,11 +106,11 @@ trigger-warnings \
 
 ## Cloud scan with Google Gemini
 
-The cloud provider sends video or audio to Google for analysis. A sanitisation
-pass runs locally first (metadata stripping and downscaling) unless you pass
-`--no-gemini-sanitize`. Sanitisation is best-effort: it aborts if it cannot
-complete, and you should review what gets uploaded. Remote files are deleted
-after the scan, but deletion is best-effort, not guaranteed.
+The cloud provider sends video and audio to Google for analysis. A sanitisation
+pass runs locally first (metadata stripping and downscaling). If sanitisation
+cannot complete, the scan aborts before any upload. You can skip sanitisation
+with `--no-gemini-sanitize`, but review what gets sent in that case. Google's
+servers attempt to delete the remote file after the scan completes.
 
 ### Requirements
 
@@ -113,23 +120,17 @@ after the scan, but deletion is best-effort, not guaranteed.
 
 ### Install from source (experimental)
 
-The current PyPI release (0.4.0a1) does not include Gemini or video-encoding
-support. Clone the repository for the latest features. This install path is
-experimental and tracks the development branch:
+The current PyPI release (0.4.0a1) does not include Gemini or the PyAV
+decoding backend. Clone the repository for the latest features. This install
+path is experimental and tracks the development branch:
 
 ```bash
 brew install ffmpeg
 git clone https://github.com/alexfur/trigger-warnings.git
 cd trigger-warnings
+python3 -m venv .venv && source .venv/bin/activate
 python3 -m pip install '.[gemini]'
 export GEMINI_API_KEY="your-api-key"
-```
-
-The pinned PyPI base package remains available for the subtitle-merging and
-DoesTheDogDie workflows:
-
-```bash
-pip install trigger-warnings
 ```
 
 ### Scan
@@ -154,7 +155,13 @@ trigger-warnings \
 ## Supply your own timestamps
 
 If you already have timestamps, provide them directly without running an AI
-model. Save this as `events.json`:
+model. The base PyPI package handles this without any AI dependencies:
+
+```bash
+pip install trigger-warnings==0.4.0a1
+```
+
+Save this as `events.json`:
 
 ```json
 [
