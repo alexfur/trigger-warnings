@@ -6,67 +6,133 @@ on:
   workflow_call:
 permissions:
   contents: read
+
+env:
+  PATH_PREFIX: /opt/homebrew/bin:/usr/local/bin
+
 jobs:
   unit:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
-    runs-on: ${{ matrix.os }}
+    name: Unit Tests (macOS)
+    runs-on: [self-hosted, macOS]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python }}
-      - run: python -m unittest discover -s tests -v
-      - run: python -m pip install .
-      - run: trigger-warnings --help
-      - run: trigger-warnings --subtitles examples/dialogue.srt --events examples/events.json --output example.warned.ass
-  package:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-      - run: python -m pip install --upgrade build twine
-      - run: python -m build
-      - run: twine check dist/*
-      - name: Install the built wheel outside the checkout
+      - uses: actions/checkout@v4
+      - name: Verify Python toolchain
         shell: bash
         run: |
-          python -m venv "$RUNNER_TEMP/wheel-check"
-          "$RUNNER_TEMP/wheel-check/bin/python" -m pip install dist/*.whl
-          cd "$RUNNER_TEMP"
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          command -v python3.12
+          python3.12 --version
+      - name: Create venv and run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          python3.12 -m venv .venv
+          . .venv/bin/activate
+          python -m unittest discover -s tests -v
+      - name: Install package
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          . .venv/bin/activate
+          python -m pip install --quiet .
+      - name: Verify CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          . .venv/bin/activate
+          trigger-warnings --help
+      - name: Run example
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          . .venv/bin/activate
+          trigger-warnings \
+            --subtitles examples/dialogue.srt \
+            --events examples/events.json \
+            --output example.warned.ass
+
+  package:
+    name: Package & Wheel Check (macOS)
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          python3.12 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --quiet --upgrade build twine
+          python -m build
+          twine check dist/*
+      - name: Verify wheel installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          python3.12 -m venv "$RUNNER_TEMP/wheel-check"
+          "$RUNNER_TEMP/wheel-check/bin/python" -m pip install --quiet dist/*.whl
           "$RUNNER_TEMP/wheel-check/bin/trigger-warnings" --version
           "$RUNNER_TEMP/wheel-check/bin/trigger-warnings" \
             --subtitles "$GITHUB_WORKSPACE/examples/dialogue.srt" \
             --events "$GITHUB_WORKSPACE/examples/events.json" \
             --output "$RUNNER_TEMP/wheel-example.ass"
+
   vision-install:
-    runs-on: macos-15
+    name: Vision Extra (macOS)
+    runs-on: [self-hosted, macOS]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - run: python -m pip install '.[vision]'
-      - run: python -m pip check
-      - name: Check optional imports (no model download or GPU required)
-        run: python -c 'from mlx_vlm import load, generate; from mlx_vlm.prompt_utils import apply_chat_template; import av; from PIL import Image'
-      - run: python -m unittest discover -s tests -p test_vision.py -v
-      - run: python -m unittest discover -s tests -p test_video.py -v
-  gemini-install:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.10'
-      - run: python -m pip install '.[gemini]'
-      - run: python -m pip check
-      - name: Check Gemini imports and mocked scans (no API key or uploads)
+      - uses: actions/checkout@v4
+      - name: Install vision extras and verify imports
+        shell: bash
         run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          python3.12 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --quiet '.[vision]'
+          python -m pip check
+          python -c 'from mlx_vlm import load, generate; from mlx_vlm.prompt_utils import apply_chat_template; import av; from PIL import Image'
+      - name: Run vision tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          . .venv/bin/activate
+          python -m unittest discover -s tests -p test_vision.py -v
+      - name: Run video tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          . .venv/bin/activate
+          python -m unittest discover -s tests -p test_video.py -v
+
+  gemini-install:
+    name: Gemini Extra (macOS)
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gemini extras and verify imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          python3.12 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --quiet '.[gemini]'
+          python -m pip check
           python -c 'from google import genai; from google.genai import types; from pydantic import BaseModel'
+      - name: Run gemini tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${{ env.PATH_PREFIX }}:$PATH"
+          . .venv/bin/activate
           python -m unittest discover -s tests -p 'test_gemini*.py' -v
