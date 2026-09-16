@@ -27,24 +27,40 @@ jobs:
 
   publish:
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     environment:
       name: ${{ inputs.target || 'testpypi' }}
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
+      - name: Verify Python toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          command -v python3.12
+          python3.12 --version
+      - name: Create venv and install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          python3.12 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade build twine
       - name: Require a version tag matching both package versions
+        shell: bash
         env:
           RELEASE_REF_TYPE: ${{ github.ref_type }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          . .venv/bin/activate
           python - <<'PY'
           import os, tomllib
           from pathlib import Path
@@ -56,13 +72,21 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a") as output:
               output.write("RELEASE_VERSION=" + version + "\n")
           PY
-      - run: python -m pip install --upgrade build twine
       - name: Build staging distributions
         if: inputs.target != 'pypi'
-        run: python -m build
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          . .venv/bin/activate
+          python -m build
       - name: Retrieve the staged distributions for production
         if: inputs.target == 'pypi'
+        shell: bash
         run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          . .venv/bin/activate
           python - <<'PY'
           import hashlib, json, os
           from pathlib import Path
@@ -80,10 +104,19 @@ jobs:
               assert hashlib.sha256(data).hexdigest() == item["digests"]["sha256"]
               (Path("dist") / filename).write_bytes(data)
           PY
-      - run: python -m twine check dist/*
-      - name: Test the distribution being published
+      - name: Twine check
+        shell: bash
         run: |
-          python -m venv "$RUNNER_TEMP/publish-check"
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          . .venv/bin/activate
+          python -m twine check dist/*
+      - name: Test the distribution being published
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          python3.12 -m venv "$RUNNER_TEMP/publish-check"
           "$RUNNER_TEMP/publish-check/bin/python" -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/publish-check/bin/trigger-warnings" --version

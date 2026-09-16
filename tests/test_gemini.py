@@ -178,5 +178,133 @@ class TestCLIGeminiFlagValidation(unittest.TestCase):
                 cli.run(args, lambda msg: None)
 
 
+class TestCLICloudFlagAliases(unittest.TestCase):
+    """Verify --cloud-* flags work identically to --gemini-* aliases."""
+
+    def test_cloud_api_key_rejected_with_local_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "movie.mp4"
+            video.write_bytes(b"dummy")
+
+            parser = cli.build_parser()
+            args = parser.parse_args([
+                "--video", str(video), "--output", "out.ass",
+                "--model-trigger", "eyes", "--cloud-api-key", "key",
+            ])
+            with self.assertRaisesRegex(TriggerWarningsError, "--cloud-api-key is only valid with --provider gemini"):
+                cli.run(args, lambda msg: None)
+
+    def test_cloud_model_rejected_with_local_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "movie.mp4"
+            video.write_bytes(b"dummy")
+
+            parser = cli.build_parser()
+            args = parser.parse_args([
+                "--video", str(video), "--output", "out.ass",
+                "--model-trigger", "eyes", "--cloud-model", "my-model",
+            ])
+            with self.assertRaisesRegex(TriggerWarningsError, "--cloud-model is only valid with --provider gemini"):
+                cli.run(args, lambda msg: None)
+
+    def test_no_sanitize_rejected_with_local_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "movie.mp4"
+            video.write_bytes(b"dummy")
+
+            parser = cli.build_parser()
+            args = parser.parse_args([
+                "--video", str(video), "--output", "out.ass",
+                "--model-trigger", "eyes", "--no-sanitize",
+            ])
+            with self.assertRaisesRegex(TriggerWarningsError, "--no-sanitize is only valid with --provider gemini"):
+                cli.run(args, lambda msg: None)
+
+    def test_cloud_api_key_resolves_from_env(self):
+        """CLOUD_API_KEY env var is picked up by _cloud_api_key."""
+        env = {"CLOUD_API_KEY": "env-cloud-key"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            args = cli.build_parser().parse_args([
+                "--provider", "gemini", "--model-trigger", "eyes",
+            ])
+            self.assertEqual(cli._cloud_api_key(args), "env-cloud-key")
+
+    def test_cloud_api_key_env_fallback_to_gemini_key(self):
+        """CLOUD_API_KEY takes precedence over GEMINI_API_KEY."""
+        env = {"CLOUD_API_KEY": "cloud-val", "GEMINI_API_KEY": "gemini-val"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            args = cli.build_parser().parse_args([
+                "--provider", "gemini", "--model-trigger", "eyes",
+            ])
+            self.assertEqual(cli._cloud_api_key(args), "cloud-val")
+
+    def test_cloud_api_key_cli_over_env(self):
+        """CLI --cloud-api-key takes precedence over env."""
+        env = {"CLOUD_API_KEY": "env-val"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            args = cli.build_parser().parse_args([
+                "--provider", "gemini", "--model-trigger", "eyes",
+                "--cloud-api-key", "cli-val",
+            ])
+            self.assertEqual(cli._cloud_api_key(args), "cli-val")
+
+    def test_gemini_api_key_fallback_when_no_cloud_key(self):
+        """--gemini-api-key still works when --cloud-api-key is absent."""
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+            "--gemini-api-key", "legacy-key",
+        ])
+        self.assertEqual(cli._cloud_api_key(args), "legacy-key")
+
+    def test_cloud_model_cli_over_default(self):
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+            "--cloud-model", "gemini-2.0-pro",
+        ])
+        self.assertEqual(cli._cloud_model(args), "gemini-2.0-pro")
+
+    def test_cloud_model_default_fallback(self):
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+        ])
+        self.assertEqual(cli._cloud_model(args), "gemini-3.6-flash")
+
+    def test_gemini_model_alias_still_works(self):
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+            "--gemini-model", "gemini-2.0-pro",
+        ])
+        self.assertEqual(cli._cloud_model(args), "gemini-2.0-pro")
+
+    def test_cloud_model_over_gemini_model(self):
+        """--cloud-model takes precedence over --gemini-model."""
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+            "--cloud-model", "cloud-wins",
+            "--gemini-model", "legacy-loses",
+        ])
+        self.assertEqual(cli._cloud_model(args), "cloud-wins")
+
+    def test_no_sanitize_flag(self):
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+            "--no-sanitize",
+        ])
+        self.assertFalse(cli._cloud_sanitize(args))
+
+    def test_no_gemini_sanitize_alias(self):
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+            "--no-gemini-sanitize",
+        ])
+        self.assertFalse(cli._cloud_sanitize(args))
+
+    def test_sanitize_default_true(self):
+        args = cli.build_parser().parse_args([
+            "--provider", "gemini", "--model-trigger", "eyes",
+        ])
+        self.assertTrue(cli._cloud_sanitize(args))
+
+
 if __name__ == "__main__":
     unittest.main()

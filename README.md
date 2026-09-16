@@ -114,10 +114,10 @@ trigger-warnings \
 The cloud provider sends video and audio to Google for analysis. A sanitisation
 pass runs locally first (metadata stripping and downscaling). If sanitisation
 cannot complete, the scan aborts before any upload. You can skip sanitisation
-with `--no-gemini-sanitize` to upload the original file. The tool attempts to
-delete every uploaded file after scanning and reports deletion failures.
-Deletion is best-effort, not guaranteed. Metadata removal does not anonymise
-the video or audio content.
+with `--no-sanitize` (or the legacy `--no-gemini-sanitize`) to upload the
+original file. The tool attempts to delete every uploaded file after scanning
+and reports deletion failures. Deletion is best-effort, not guaranteed.
+Metadata removal does not anonymise the video or audio content.
 
 Runtime depends on video length, encoding, connection speed and model
 availability. API usage may incur charges on your Google account.
@@ -159,9 +159,12 @@ trigger-warnings \
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--provider` | `local` | `local` (Apple Silicon MLX) or `gemini` (Google Cloud) |
-| `--gemini-api-key` | Env var | Google AI Studio key; falls back to `GEMINI_API_KEY` |
-| `--gemini-model` | `gemini-3.6-flash` | Gemini model for cloud scanning |
-| `--no-gemini-sanitize` | Off | Skip local metadata stripping and downscaling before upload |
+| `--cloud-api-key` | Env var | API key for cloud provider; falls back to `CLOUD_API_KEY` or `GEMINI_API_KEY` |
+| `--cloud-model` | Provider default | Model for cloud provider (gemini default: `gemini-3.6-flash`) |
+| `--no-sanitize` | Off | Skip local metadata stripping and downscaling before cloud upload |
+| `--gemini-api-key` | Env var | Alias for `--cloud-api-key` (backward compatible) |
+| `--gemini-model` | `gemini-3.6-flash` | Alias for `--cloud-model` (backward compatible) |
+| `--no-gemini-sanitize` | Off | Alias for `--no-sanitize` (backward compatible) |
 
 
 ## Supply your own timestamps

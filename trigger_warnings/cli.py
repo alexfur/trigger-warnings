@@ -341,16 +341,30 @@ def build_parser():
         help="scanning provider: 'local' (default, Apple Silicon MLX) or 'gemini' (Google Cloud Gemini)",
     )
     parser.add_argument(
-        "--gemini-api-key", metavar="KEY",
-        help="Google AI Studio API key for --provider gemini (falls back to GEMINI_API_KEY environment variable)",
+        "--cloud-api-key", metavar="KEY",
+        help="API key for cloud provider; falls back to CLOUD_API_KEY or "
+             "GEMINI_API_KEY environment variable",
     )
     parser.add_argument(
-        "--gemini-model", default="gemini-3.6-flash", metavar="MODEL",
-        help="Gemini model for --provider gemini (default: gemini-3.6-flash)",
+        "--cloud-model", metavar="MODEL",
+        help="model for cloud provider; default for gemini is gemini-3.6-flash",
+    )
+    parser.add_argument(
+        "--no-sanitize", action="store_true",
+        help="skip local FFmpeg metadata stripping and downscaling before "
+             "cloud upload",
+    )
+    parser.add_argument(
+        "--gemini-api-key", metavar="KEY",
+        help="alias for --cloud-api-key (backward compatible)",
+    )
+    parser.add_argument(
+        "--gemini-model", default=None, metavar="MODEL",
+        help="alias for --cloud-model (backward compatible)",
     )
     parser.add_argument(
         "--no-gemini-sanitize", action="store_true",
-        help="skip local FFmpeg metadata stripping and downscaling before upload to Gemini",
+        help="alias for --no-sanitize (backward compatible)",
     )
     parser.add_argument(
         "--os-search", metavar="TITLE",
@@ -757,6 +771,26 @@ def _ddd_api_key(args):
     return args.ddd_api_key or os.environ.get("DDD_API_KEY")
 
 
+def _cloud_api_key(args):
+    """Resolve the cloud API key: generic flag, gemini alias, or env vars."""
+    return (
+        args.cloud_api_key
+        or args.gemini_api_key
+        or os.environ.get("CLOUD_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+    )
+
+
+def _cloud_model(args):
+    """Resolve the cloud model: generic flag, gemini alias, or default."""
+    return args.cloud_model or args.gemini_model or "gemini-3.6-flash"
+
+
+def _cloud_sanitize(args):
+    """Resolve sanitize: --no-sanitize or --no-gemini-sanitize disables it."""
+    return not (args.no_sanitize or args.no_gemini_sanitize)
+
+
 def _load_ddd_events(args, report):
     """Fetch one user's official API data without persisting a copy of it."""
     from . import ddd
@@ -827,12 +861,12 @@ def _load_model_events(args, report, triggers=None):
             scan = gemini.scan_video_gemini(
                 args.video,
                 effective_triggers,
-                api_key=args.gemini_api_key,
-                model=args.gemini_model,
+                api_key=_cloud_api_key(args),
+                model=_cloud_model(args),
                 trigger_descriptors=descs or None,
                 report=report,
                 json_progress=args.progress_json,
-                sanitize=not args.no_gemini_sanitize,
+                sanitize=_cloud_sanitize(args),
             )
         except gemini.GeminiError as error:
             raise TriggerWarningsError(str(error)) from error
@@ -1168,8 +1202,11 @@ def _reject_os_flags(args, mode, allowed):
         ("--model-max-tokens", args.model_max_tokens, 16),
         ("--progress-json", args.progress_json, False),
         ("--provider", args.provider, "local"),
+        ("--cloud-api-key", args.cloud_api_key, None),
+        ("--cloud-model", args.cloud_model, None),
+        ("--no-sanitize", args.no_sanitize, False),
         ("--gemini-api-key", args.gemini_api_key, None),
-        ("--gemini-model", args.gemini_model, "gemini-3.6-flash"),
+        ("--gemini-model", args.gemini_model, None),
         ("--no-gemini-sanitize", args.no_gemini_sanitize, False),
         ("--os-search", args.os_search, None),
         ("--os-file", args.os_file, None),
@@ -1688,14 +1725,23 @@ def run(args, report, result=None, setup_prompter=None):
             ("--model-trigger-desc", args.model_trigger_desc, []),
             ("--progress-json", args.progress_json, False),
             ("--provider", args.provider, "local"),
+            ("--cloud-api-key", args.cloud_api_key, None),
+            ("--cloud-model", args.cloud_model, None),
+            ("--no-sanitize", args.no_sanitize, False),
             ("--gemini-api-key", args.gemini_api_key, None),
-            ("--gemini-model", args.gemini_model, "gemini-3.6-flash"),
+            ("--gemini-model", args.gemini_model, None),
             ("--no-gemini-sanitize", args.no_gemini_sanitize, False),
         ):
             if value is not None and _was_supplied(args, flag, value, default):
                 raise TriggerWarningsError("{} needs --model-trigger".format(flag))
     else:
         if args.provider == "local":
+            if _was_supplied(args, "--cloud-api-key", args.cloud_api_key, None):
+                raise TriggerWarningsError("--cloud-api-key is only valid with --provider gemini")
+            if _was_supplied(args, "--cloud-model", args.cloud_model, None):
+                raise TriggerWarningsError("--cloud-model is only valid with --provider gemini")
+            if _was_supplied(args, "--no-sanitize", args.no_sanitize, False):
+                raise TriggerWarningsError("--no-sanitize is only valid with --provider gemini")
             if _was_supplied(args, "--gemini-api-key", args.gemini_api_key, None):
                 raise TriggerWarningsError("--gemini-api-key is only valid with --provider gemini")
             if _was_supplied(args, "--no-gemini-sanitize", args.no_gemini_sanitize, False):
