@@ -57,3 +57,16 @@ jobs:
         run: python -c 'from mlx_vlm import load, generate; from mlx_vlm.prompt_utils import apply_chat_template; import av; from PIL import Image'
       - run: python -m unittest discover -s tests -p test_vision.py -v
       - run: python -m unittest discover -s tests -p test_video.py -v
+  gemini-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+      - run: python -m pip install '.[gemini]'
+      - run: python -m pip check
+      - name: Check Gemini imports and mocked scans (no API key or uploads)
+        run: |
+          python -c 'from google import genai; from google.genai import types; from pydantic import BaseModel'
+          python -m unittest discover -s tests -p 'test_gemini*.py' -v
