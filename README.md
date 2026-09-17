@@ -23,10 +23,6 @@ screen. Load the file in your video player.
 [CI checks](https://github.com/alexfur/trigger-warnings/actions/workflows/tests.yml)
 
 
-The current source version is `0.4.0a2` (unreleased). PyPI serves `0.4.0a1`,
-which does not include Gemini or the newer PyAV decoding backend. Use the
-source instructions below for the latest features.
-
 ## Scan a video with local AI
 
 The AI runs entirely on your Mac. Your video never leaves your computer. The
@@ -43,11 +39,9 @@ playback warning system.
 
 ```bash
 brew install ffmpeg
-git clone https://github.com/alexfur/trigger-warnings.git
-cd trigger-warnings
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install '.[vision]'
+pip install 'trigger-warnings[vision]'
 ```
 
 FFmpeg reads the video container. The `vision` extra installs local AI model
@@ -127,21 +121,15 @@ availability. API usage may incur charges on your Google account.
 - Google AI Studio API key.
 - Python 3.10 or newer (the `google-genai` package requires it).
 - FFmpeg on your PATH (the command below uses Homebrew on macOS).
-- The `gemini` extra, available through a source install.
+- The `gemini` extra.
 
-### Install from source (experimental)
-
-The current PyPI release (0.4.0a1) does not include Gemini or the PyAV
-decoding backend. Clone the repository for the latest features. This install
-path is experimental and tracks the development branch:
+### Install
 
 ```bash
 brew install ffmpeg
-git clone https://github.com/alexfur/trigger-warnings.git
-cd trigger-warnings
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install '.[gemini]'
+pip install 'trigger-warnings[gemini]'
 export GEMINI_API_KEY="your-api-key"
 ```
 
@@ -173,9 +161,7 @@ If you already have timestamps, provide them directly without running an AI
 model. The base PyPI package handles this without any AI dependencies:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install 'trigger-warnings==0.4.0a1'
+pip install trigger-warnings
 ```
 
 Save this as `events.json`:
@@ -195,18 +181,6 @@ is not a safe point to resume watching.
 trigger-warnings --subtitles "movie.srt" \
   --events events.json --output "movie.warnings.ass"
 ```
-
-If you cloned the source repository above, run the bundled examples from its
-root directory:
-
-```bash
-trigger-warnings --subtitles examples/dialogue.srt \
-  --events examples/events.json --output example.warnings.ass
-```
-
-The examples directory is only available in the source repository, not the
-PyPI package.
-
 
 ## Recipes
 
