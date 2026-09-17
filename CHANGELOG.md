@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## 0.4.0a2 (unreleased)
+## 0.4.0a2
 
 ### Added
 
@@ -12,10 +12,12 @@ All notable changes to this project are documented here.
 
 ### Changed
 
-- The README distinguishes the published alpha from source-only features,
-  separates local and cloud scanning, and removes unmeasured speed claims.
+- The CLI introduces generic cloud options (`--cloud-api-key`, `--cloud-model`,
+  `--no-sanitize`) while preserving backward-compatible `--gemini-*` aliases.
+- The README streamlines installation to pip package commands (`trigger-warnings[gemini]`,
+  `trigger-warnings[vision]`) with zero cloning or source build steps.
 - Gemini sanitisation failures stop the scan before upload. Uploading the
-  original video requires the explicit `--no-gemini-sanitize` option.
+  original video requires the explicit `--no-sanitize` option.
 - The personal episode runner has been replaced with `scripts/scan-videos.py`.
 
 ### Fixed
