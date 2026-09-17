@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trigger-warnings"
-version = "0.4.0a2"
+version = "0.4.0a3"
 description = "Spoiler-free trigger warnings for local video"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -37,7 +37,7 @@ vision = [
     "av>=14,<17",
 ]
 gemini = [
-    "google-genai>=2.0.0",
+    "google-genai>=1.0.0",
 ]
 
 [project.urls]
