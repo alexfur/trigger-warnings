@@ -1,9 +1,8 @@
 # Release
 
-The next candidate is `0.4.0a2`, currently available from source only. PyPI
-and TestPyPI contain `0.4.0a1`, which does not include the Gemini backend.
-Keep source installation instructions until the new package has been
-published and verified on PyPI.
+The next candidate is `0.4.0a2`. PyPI and TestPyPI contain `0.4.0a1`.
+Staging `0.4.0a2` to TestPyPI and promoting to PyPI provides the packaged
+release with cloud and local model support installed via `pip`.
 
 ## One-time account setup
 
