@@ -41,7 +41,7 @@ playback warning system.
 brew install ffmpeg
 python3 -m venv .venv
 source .venv/bin/activate
-pip install 'trigger-warnings[vision]'
+pip install 'trigger-warnings[vision]==0.4.0a2'
 ```
 
 FFmpeg reads the video container. The `vision` extra installs local AI model
@@ -129,7 +129,7 @@ availability. API usage may incur charges on your Google account.
 brew install ffmpeg
 python3 -m venv .venv
 source .venv/bin/activate
-pip install 'trigger-warnings[gemini]'
+pip install 'trigger-warnings[gemini]==0.4.0a2'
 export GEMINI_API_KEY="your-api-key"
 ```
 
@@ -161,7 +161,7 @@ If you already have timestamps, provide them directly without running an AI
 model. The base PyPI package handles this without any AI dependencies:
 
 ```bash
-pip install trigger-warnings
+pip install 'trigger-warnings==0.4.0a2'
 ```
 
 Save this as `events.json`:
