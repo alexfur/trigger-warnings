@@ -10,7 +10,7 @@ it.
     python3 scripts/make_visuals.py --check    # report only, write nothing
 
 FFmpeg is required for the video assets and is not needed to use the tool from
-a subtitle file. See docs/launch/visuals.md for what each asset is for.
+a subtitle file.
 """
 
 import argparse
