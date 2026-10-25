@@ -16,8 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install FFmpeg
-        run: brew install ffmpeg
+      - name: Install FFmpeg (with libass)
+        run: |
+          brew install ffmpeg-full
+          echo "$(brew --prefix ffmpeg-full)/bin" >> "$GITHUB_PATH"
       - name: Verify Python toolchain
         shell: bash
         run: |
@@ -89,8 +91,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install FFmpeg
-        run: brew install ffmpeg
+      - name: Install FFmpeg (with libass)
+        run: |
+          brew install ffmpeg-full
+          echo "$(brew --prefix ffmpeg-full)/bin" >> "$GITHUB_PATH"
       - name: Install vision extras and verify imports
         shell: bash
         run: |
