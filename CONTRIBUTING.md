@@ -9,8 +9,10 @@ python3 -m unittest discover -s tests -v
 ```
 
 `RUN_MEDIA_TESTS=1` enables the FFmpeg integration checks. Run the normal suite
-before sending a pull request. The continuous-integration matrix covers Python
-3.9 through 3.13 on Ubuntu and macOS, then builds and checks the distribution.
+before sending a pull request. Continuous integration runs on GitHub-hosted
+macOS runners with Python 3.12: unit tests, a build and wheel check, and the
+`vision` and `gemini` extras. The first pull request from a new contributor
+waits for a maintainer to approve the workflow run.
 
 ## Changes
 

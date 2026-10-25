@@ -7,50 +7,45 @@ on:
 permissions:
   contents: read
 
-env:
-  PATH_PREFIX: /opt/homebrew/bin:/usr/local/bin
-
 jobs:
   unit:
     name: Unit Tests (macOS)
-    runs-on: [self-hosted, macOS]
-    if: github.event_name == 'push' || github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install FFmpeg
+        run: brew install ffmpeg
       - name: Verify Python toolchain
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
-          command -v python3.12
-          python3.12 --version
+          python --version
       - name: Create venv and run unit tests
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
-          python3.12 -m venv .venv
+          python -m venv .venv
           . .venv/bin/activate
           python -m unittest discover -s tests -v
       - name: Install package
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
           . .venv/bin/activate
           python -m pip install --quiet .
       - name: Verify CLI
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
           . .venv/bin/activate
           trigger-warnings --help
       - name: Run example
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
           . .venv/bin/activate
           trigger-warnings \
             --subtitles examples/dialogue.srt \
@@ -59,16 +54,17 @@ jobs:
 
   package:
     name: Package & Wheel Check (macOS)
-    runs-on: [self-hosted, macOS]
-    if: github.event_name == 'push' || github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Build and check distribution
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
-          python3.12 -m venv .venv
+          python -m venv .venv
           . .venv/bin/activate
           python -m pip install --quiet --upgrade build twine
           python -m build
@@ -77,8 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
-          python3.12 -m venv "$RUNNER_TEMP/wheel-check"
+          python -m venv "$RUNNER_TEMP/wheel-check"
           "$RUNNER_TEMP/wheel-check/bin/python" -m pip install --quiet dist/*.whl
           "$RUNNER_TEMP/wheel-check/bin/trigger-warnings" --version
           "$RUNNER_TEMP/wheel-check/bin/trigger-warnings" \
@@ -88,16 +83,19 @@ jobs:
 
   vision-install:
     name: Vision Extra (macOS)
-    runs-on: [self-hosted, macOS]
-    if: github.event_name == 'push' || github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install FFmpeg
+        run: brew install ffmpeg
       - name: Install vision extras and verify imports
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
-          python3.12 -m venv .venv
+          python -m venv .venv
           . .venv/bin/activate
           python -m pip install --quiet '.[vision]'
           python -m pip check
@@ -106,29 +104,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
           . .venv/bin/activate
           python -m unittest discover -s tests -p test_vision.py -v
       - name: Run video tests
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
           . .venv/bin/activate
           python -m unittest discover -s tests -p test_video.py -v
 
   gemini-install:
     name: Gemini Extra (macOS)
-    runs-on: [self-hosted, macOS]
-    if: github.event_name == 'push' || github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install gemini extras and verify imports
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
-          python3.12 -m venv .venv
+          python -m venv .venv
           . .venv/bin/activate
           python -m pip install --quiet '.[gemini]'
           python -m pip check
@@ -137,6 +134,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="${{ env.PATH_PREFIX }}:$PATH"
           . .venv/bin/activate
           python -m unittest discover -s tests -p 'test_gemini*.py' -v
