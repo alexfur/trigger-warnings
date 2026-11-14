@@ -177,7 +177,8 @@ class CliTests(unittest.TestCase):
         result = {}
         try:
             args = cli.build_parser().parse_args(argv)
-            status = cli.run(args, lambda m, level="info": messages.append(m), result)
+            status = cli.run(args, lambda m, level="info": messages.append(m), result,
+                             setup_prompter=wizard.SetupPrompter(isatty=lambda: False))
         finally:
             _os.environ.clear()
             _os.environ.update(saved)
