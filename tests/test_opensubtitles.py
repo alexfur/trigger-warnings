@@ -41,7 +41,7 @@ API_KEY = "test-api-key"
 USERNAME = "test-user"
 PASSWORD = "test-password"
 TOKEN = "test-session-token"
-LINK_TOKEN = "8f3a9c2b1d4e5f60718293a4b5c6d7e8"
+LINK_TOKEN = "00000000000000000000000000000000"
 LINK = "https://example-cdn.invalid/download/{}/dialogue.srt".format(LINK_TOKEN)
 
 SEARCH_PAYLOAD = json.dumps({

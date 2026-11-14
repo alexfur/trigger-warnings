@@ -2051,7 +2051,7 @@ class TestOpenSubtitlesCommandSurface(CliTestCase):
 
     def test_a_rejected_command_never_echoes_the_api_key(self):
         """The value is what must not come back; the flag name is what helps."""
-        secret = "sk-live-do-not-echo-this"
+        secret = "FAKE-VALUE-do-not-echo-this"
         result = self.run_cli(
             "--os-search", "The Thing",
             "--os-api-key", secret,
@@ -2064,7 +2064,7 @@ class TestOpenSubtitlesCommandSurface(CliTestCase):
 
     def test_a_misspelled_key_flag_does_not_echo_its_value(self):
         """A typo puts the key where argparse would normally quote it back."""
-        secret = "sk-live-do-not-echo-this"
+        secret = "FAKE-VALUE-do-not-echo-this"
         result = self.run_cli(
             "--os-search", "The Thing", "--os-api-ke={}".format(secret),
         )
@@ -2075,7 +2075,7 @@ class TestOpenSubtitlesCommandSurface(CliTestCase):
         self.assertIn("--os-api-ke", result.stderr)
 
     def test_a_credential_failure_under_json_is_structured_and_clean(self):
-        secret = "sk-live-do-not-echo-this"
+        secret = "FAKE-VALUE-do-not-echo-this"
         output = self.download_target
         result = self.run_cli(
             "--os-file", "7061050", "--output", output,
