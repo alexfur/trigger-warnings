@@ -1,0 +1,9 @@
+[
+  {"start": 6, "end": 8, "label": "jump scares", "severity": "mild"},
+  {"start": "00:03:19.000", "end": 221, "label": "needles", "severity": "moderate"},
+  {"start": 268, "end": 302, "label": "flashing lights", "severity": "strong"},
+  {"start": 284, "end": 287, "label": "jump scares"},
+  {"start": 413, "end": 445, "label": "a dog is hurt", "severity": "moderate"},
+  {"start": 537, "label": "flashing lights"},
+  {"start": 607, "end": 609, "label": "jump scares", "severity": "mild"}
+]

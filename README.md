@@ -23,6 +23,16 @@ screen. Load the file in your video player.
 [CI checks](https://github.com/alexfur/trigger-warnings/actions/workflows/tests.yml)
 
 
+## Your media
+
+trigger-warnings works on video and subtitle files you already have, and it
+never downloads video. Use it with media you own or are licensed to use. Only
+the cloud scan sends a video anywhere. It uploads the video to Google for
+analysis, so use it only with videos you have the right to share. Subtitles
+from OpenSubtitles and timestamps from DoesTheDogDie come under those
+services' own terms.
+
+
 ## Scan a video with local AI
 
 The AI runs entirely on your Mac. Your video never leaves your computer. The
@@ -181,6 +191,9 @@ is not a safe point to resume watching.
 trigger-warnings --subtitles "movie.srt" \
   --events events.json --output "movie.warnings.ass"
 ```
+
+`examples/sample-film.srt` and `examples/sample-film.events.json` are a longer
+invented example with four labels, for trying `--category`.
 
 ## Recipes
 
