@@ -5,6 +5,12 @@ build/
 dist/
 .venv/
 .venv-*/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .DS_Store
 .maestri/
 .playwright-cli/
